@@ -1,0 +1,139 @@
+import { useId, type FormEvent } from "react";
+
+import { Bot, Play, ShieldCheck } from "lucide-react";
+
+import { StatusBadge } from "@/components/dashboard/dashboard-primitives";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
+
+export function LauncherCard({
+  task,
+  setTask,
+  model,
+  setModel,
+  headless,
+  setHeadless,
+  submitting,
+  submitError,
+  onSubmit,
+  helperText,
+}: {
+  task: string;
+  setTask: (value: string) => void;
+  model: string;
+  setModel: (value: string) => void;
+  headless: boolean;
+  setHeadless: (value: boolean) => void;
+  submitting: boolean;
+  submitError: string | null;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  helperText: string;
+}) {
+  const goalId = useId();
+  const modelId = useId();
+  const headlessId = useId();
+
+  return (
+    <Card className="border-border bg-card">
+      <CardHeader className="space-y-4">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="space-y-2">
+            <p className="font-mono text-[0.68rem] uppercase tracking-[0.24em] text-primary/80">Run brief</p>
+            <div className="inline-flex size-11 items-center justify-center rounded-lg border border-primary/20 bg-primary/10 text-primary">
+              <Bot className="size-5" />
+            </div>
+            <div className="space-y-1">
+              <CardTitle>
+                <h2>Launch run</h2>
+              </CardTitle>
+              <CardDescription className="leading-6">{helperText}</CardDescription>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <StatusBadge tone="info">Supervised</StatusBadge>
+            <StatusBadge tone="success">Approval gates</StatusBadge>
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent>
+        <form className="space-y-5" onSubmit={onSubmit}>
+          <div className="space-y-2">
+            <Label htmlFor={goalId}>Goal</Label>
+            <Textarea
+              id={goalId}
+              name="task"
+              value={task}
+              onChange={(event) => setTask(event.target.value)}
+              placeholder="Book a return flight to Tokyo next month and stop before payment."
+              className="min-h-44 rounded-xl border-border bg-[#0d1317] px-4 py-3.5 text-[0.95rem] leading-7"
+              required
+            />
+            <p className="text-xs leading-5 text-muted-foreground">
+              State the outcome, hard constraints, and the exact stop line the operator expects.
+            </p>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_168px]">
+            <div className="space-y-2">
+              <Label htmlFor={modelId}>Model override</Label>
+              <Input
+                id={modelId}
+                name="model"
+                type="text"
+                value={model}
+                onChange={(event) => setModel(event.target.value)}
+                placeholder="gemini-3.6-flash"
+                className="h-11 rounded-lg px-3.5"
+              />
+            </div>
+
+            <div className="rounded-xl border border-border bg-muted/45 p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor={headlessId}>Headless mode</Label>
+                  <p className="text-sm leading-6 text-muted-foreground">
+                    Hide the visible browser window and rely on logs, captures, and result artifacts.
+                  </p>
+                </div>
+                <Switch id={headlessId} checked={headless} onCheckedChange={setHeadless} />
+              </div>
+            </div>
+          </div>
+
+          {submitError ? (
+            <div
+              role="alert"
+              className="rounded-lg border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm text-[#ffd1d1]"
+            >
+              {submitError}
+            </div>
+          ) : null}
+
+          <Separator className="bg-border" />
+
+          <CardFooter className="flex flex-col items-stretch gap-3 border-0 bg-transparent p-0 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <ShieldCheck className="size-4 text-primary" />
+              Read-only steps may auto-run. Gated actions still stop for operator review.
+            </div>
+            <Button
+              type="submit"
+              size="lg"
+              className="h-11 rounded-md px-5"
+              disabled={submitting || !task.trim()}
+            >
+              <Play className="size-4" />
+              {submitting ? "Starting..." : "Launch run"}
+            </Button>
+          </CardFooter>
+        </form>
+      </CardContent>
+    </Card>
+  );
+}
