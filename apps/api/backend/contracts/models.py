@@ -42,13 +42,21 @@ class ApprovalDecision(str, Enum):
 
 class CreateRunRequest(BaseModel):
     task: str = Field(min_length=1, description="Natural-language browser task.")
-    model: str | None = Field(default=None, description="Optional Gemini model override.")
+    model: str | None = Field(default=None, description="Optional OpenRouter model override.")
     headless: bool | None = Field(default=None, description="Optional browser headless override.")
 
 
 class ApprovalDecisionRequest(BaseModel):
     decision: ApprovalDecision
     note: str | None = None
+
+
+class PendingApprovalResponse(BaseModel):
+    id: str
+    action_name: str
+    params: dict[str, Any]
+    reason: str
+    requested_at: datetime
 
 
 class ArtifactKind(str, Enum):
@@ -88,6 +96,7 @@ class RunStatusResponse(BaseModel):
     updated_at: datetime
     completed_at: datetime | None = None
     pending_approval_id: str | None = None
+    pending_approval: PendingApprovalResponse | None = None
     last_error: str | None = None
 
 

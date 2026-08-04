@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 
 from backend.agent.service import RunService
 from backend.api.dependencies import get_run_service
@@ -55,6 +54,20 @@ async def list_artifacts(run_id: str, service: RunService = Depends(get_run_serv
         return await service.list_artifacts(run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.get("/runs/{run_id}/artifacts/{artifact_path:path}")
+async def get_artifact(run_id: str, artifact_path: str, service: RunService = Depends(get_run_service)) -> FileResponse:
+    try:
+        file_path = await service.get_artifact_path(run_id, artifact_path)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return FileResponse(file_path)
 
 
 @router.get("/runs/{run_id}/events")

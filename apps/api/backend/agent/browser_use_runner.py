@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from browser_use import Agent, BrowserSession, ChatGoogle
+from browser_use import Agent, BrowserSession
+from browser_use.llm import ChatOpenRouter
 
 from backend.agent.policies import should_require_approval
 from backend.agent.service import ManagedRunContext
@@ -25,9 +26,9 @@ class BrowserUseRunner:
             record_video_dir=str(context.run_dir / "videos"),
             downloads_path=str(context.run_dir / "downloads"),
         )
-        llm = ChatGoogle(
+        llm = ChatOpenRouter(
             model=context.model,
-            api_key=self.settings.google_api_key.get_secret_value(),
+            api_key=self.settings.openrouter_api_key.get_secret_value(),
         )
         history_path = context.run_dir / "history.json"
         agent = Agent(

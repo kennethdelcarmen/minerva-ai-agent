@@ -53,3 +53,17 @@ class RunStore:
                 )
             )
         return artifacts
+
+    def resolve_artifact_path(self, run_dir: Path, artifact_path: str) -> Path:
+        root = run_dir.resolve()
+        candidate = (run_dir / artifact_path).resolve()
+
+        try:
+            candidate.relative_to(root)
+        except ValueError as exc:
+            raise ValueError(f"Artifact path {artifact_path!r} is outside the run directory") from exc
+
+        if not candidate.exists() or not candidate.is_file():
+            raise FileNotFoundError(f"Artifact {artifact_path!r} not found")
+
+        return candidate

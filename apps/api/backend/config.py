@@ -8,29 +8,35 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+APP_ROOT = Path(__file__).resolve().parents[1]
+
 
 class Settings(BaseSettings):
     """Runtime configuration loaded from environment variables."""
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=APP_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
     )
 
-    google_api_key: SecretStr = Field(
-        validation_alias=AliasChoices("GOOGLE_API_KEY", "GEMINI_API_KEY"),
-        serialization_alias="GOOGLE_API_KEY",
+    openrouter_api_key: SecretStr = Field(
+        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
+        serialization_alias="OPENROUTER_API_KEY",
     )
-    google_model: str = Field(
-        default="gemini-3.6-flash",
-        validation_alias=AliasChoices("GOOGLE_MODEL", "GEMINI_MODEL"),
-        serialization_alias="GOOGLE_MODEL",
+    openrouter_model: str = Field(
+        default="google/gemini-2.5-flash:free",
+        validation_alias=AliasChoices("OPENROUTER_MODEL"),
+        serialization_alias="OPENROUTER_MODEL",
     )
     headless: bool = Field(default=False, alias="HEADLESS")
-    artifact_root: Path = Field(default=Path(".runs"), alias="ARTIFACT_ROOT")
+    artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     max_steps: int = Field(default=25, alias="MAX_STEPS")
+    cors_allow_origins: list[str] = Field(
+        default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
+        alias="CORS_ALLOW_ORIGINS",
+    )
 
 
 @lru_cache

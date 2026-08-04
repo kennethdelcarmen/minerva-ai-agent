@@ -14,6 +14,7 @@ from backend.contracts.models import (
     ArtifactDescriptor,
     CreateRunRequest,
     EventType,
+    PendingApprovalResponse,
     RunArtifactsResponse,
     RunEvent,
     RunStatus,
@@ -126,7 +127,7 @@ class RunService:
         record = RunRecord(
             id=run_id,
             request=request,
-            model=request.model or self.settings.google_model,
+            model=request.model or self.settings.openrouter_model,
             headless=self.settings.headless if request.headless is None else request.headless,
             status=RunStatus.PENDING,
             run_dir=self.store.create_run_dir(run_id),
@@ -203,6 +204,10 @@ class RunService:
         record = self._get_record(run_id)
         artifacts: list[ArtifactDescriptor] = self.store.list_artifacts(record.run_dir)
         return RunArtifactsResponse(run_id=run_id, artifacts=artifacts)
+
+    async def get_artifact_path(self, run_id: str, artifact_path: str) -> Path:
+        record = self._get_record(run_id)
+        return self.store.resolve_artifact_path(record.run_dir, artifact_path)
 
     async def decide_approval(self, run_id: str, approval_id: str, decision: ApprovalDecision, note: str | None) -> RunStatusResponse:
         record = self._get_record(run_id)
@@ -323,6 +328,16 @@ class RunService:
             raise KeyError(f"Run {run_id} not found") from exc
 
     def _status_response(self, record: RunRecord) -> RunStatusResponse:
+        pending_approval = None
+        if record.pending_approval is not None:
+            pending_approval = PendingApprovalResponse(
+                id=record.pending_approval.id,
+                action_name=record.pending_approval.action_name,
+                params=record.pending_approval.params,
+                reason=record.pending_approval.reason,
+                requested_at=record.pending_approval.requested_at,
+            )
+
         return RunStatusResponse(
             run_id=record.id,
             status=record.status,
@@ -334,5 +349,6 @@ class RunService:
             updated_at=record.updated_at,
             completed_at=record.completed_at,
             pending_approval_id=record.pending_approval.id if record.pending_approval else None,
+            pending_approval=pending_approval,
             last_error=record.last_error,
         )

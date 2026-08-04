@@ -5,11 +5,24 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from backend.agent.browser_use_runner import BrowserUseRunner
 from backend.agent.service import RunService
 from backend.api.routes import router
 from backend.config import Settings, get_settings
+
+
+def configure_app(app: FastAPI, settings: Settings) -> FastAPI:
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allow_origins,
+        allow_credentials=False,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.include_router(router)
+    return app
 
 
 def create_app(settings: Settings | None = None, run_service: RunService | None = None) -> FastAPI:
@@ -21,8 +34,7 @@ def create_app(settings: Settings | None = None, run_service: RunService | None 
         app = FastAPI(title="Minerva AI Agent Backend", version="0.1.0")
         app.state.settings = resolved_settings
         app.state.run_service = service
-        app.include_router(router)
-        return app
+        return configure_app(app, resolved_settings)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -32,8 +44,7 @@ def create_app(settings: Settings | None = None, run_service: RunService | None 
         yield
 
     app = FastAPI(title="Minerva AI Agent Backend", version="0.1.0", lifespan=lifespan)
-    app.include_router(router)
-    return app
+    return configure_app(app, get_settings())
 
 
 app = create_app()

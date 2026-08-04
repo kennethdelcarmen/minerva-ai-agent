@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -11,6 +12,10 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.agent.service import ManagedRunContext, RunService
+
+os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
+os.environ.setdefault("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
+
 from backend.api.app import create_app
 from backend.config import Settings
 from backend.contracts.models import EventType
@@ -53,10 +58,10 @@ class FakeRunner:
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        GOOGLE_API_KEY="test-key",
+        OPENROUTER_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
         HEADLESS=True,
-        GOOGLE_MODEL="gemini-3.6-flash",
+        OPENROUTER_MODEL="google/gemini-2.5-flash:free",
     )
 
 
@@ -116,6 +121,13 @@ def test_approval_blocks_until_decision(settings: Settings) -> None:
         status = wait_for_status(client, run_id, "waiting_for_approval")
 
         approval_id = status["pending_approval_id"]
+        assert status["pending_approval"] == {
+            "id": approval_id,
+            "action_name": "click",
+            "params": {"index": 1},
+            "reason": "Click requires approval.",
+            "requested_at": status["pending_approval"]["requested_at"],
+        }
         response = client.post(
             f"/runs/{run_id}/approvals/{approval_id}",
             json={"decision": "approve", "note": "Proceed"},
@@ -166,3 +178,29 @@ def test_artifacts_are_persisted(settings: Settings) -> None:
         artifact_paths = {item["path"] for item in artifacts.json()["artifacts"]}
         assert "events.jsonl" in artifact_paths
         assert "result.json" in artifact_paths
+
+
+def test_artifact_file_is_served(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        run_id = client.post("/runs", json={"task": "Serve artifact"}).json()["run_id"]
+
+        wait_for_status(client, run_id, "succeeded")
+
+        screenshot_path = settings.artifact_root / run_id / "screenshots" / "step-001.png"
+        screenshot_path.write_bytes(b"png-bytes")
+
+        artifact = client.get(f"/runs/{run_id}/artifacts/screenshots/step-001.png")
+        assert artifact.status_code == 200
+        assert artifact.content == b"png-bytes"
+
+
+def test_artifact_path_traversal_is_rejected(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        run_id = client.post("/runs", json={"task": "Reject traversal"}).json()["run_id"]
+
+        wait_for_status(client, run_id, "succeeded")
+
+        traversal = client.get(f"/runs/{run_id}/artifacts/..%2Foutside.txt")
+        assert traversal.status_code == 400
