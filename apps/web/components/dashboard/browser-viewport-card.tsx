@@ -1,8 +1,8 @@
-import { ArrowLeft, ArrowRight, Globe2, ImageIcon, RefreshCw } from "lucide-react";
+import { Globe2, ImageIcon } from "lucide-react";
 
-import { EmptyState, StatusBadge } from "@/components/dashboard/dashboard-primitives";
+import { ActivityIndicator, EmptyState, StatusBadge } from "@/components/dashboard/dashboard-primitives";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatTimestamp, statusLabel, statusTone } from "@/src/lib/dashboard-display";
+import { formatTimestamp, runIndicatorState, statusLabel, statusTone } from "@/src/lib/dashboard-display";
 import type { RunStatusResponse } from "@/src/lib/types";
 
 export function BrowserViewportCard({
@@ -17,23 +17,37 @@ export function BrowserViewportCard({
   artifactUrl: (runId: string, artifactPath: string) => string;
 }) {
   const isIdle = !status;
+  const indicatorState = status ? runIndicatorState(status.status, Boolean(status.pending_approval)) : "idle";
+  const browserActivityLabel =
+    indicatorState === "running"
+      ? "Browser live"
+      : indicatorState === "blocked"
+        ? "Waiting for your review"
+        : indicatorState === "success"
+          ? "Browser complete"
+          : indicatorState === "danger"
+            ? "Browser ended"
+            : "Browser idle";
 
   return (
     <Card className="overflow-hidden border-border bg-card shadow-[0_20px_70px_rgba(0,0,0,0.38)]">
       <CardHeader className="gap-4">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="space-y-1">
-            <p className="font-mono text-[0.68rem] uppercase tracking-[0.24em] text-primary/80">Live state</p>
+            <p className="font-mono text-[0.68rem] uppercase tracking-[0.24em] text-primary/80">Browser</p>
             <CardTitle>
-              <h2>Browser viewport</h2>
+              <h2>What Minerva sees</h2>
             </CardTitle>
             <CardDescription className="leading-6">
-              {status?.current_step_summary ?? "The live browser surface appears here during a run."}
+              {status?.current_step_summary ?? "The live browser view appears here during a run."}
             </CardDescription>
+            </div>
+          <div className="flex flex-wrap items-center gap-2">
+            {status ? <ActivityIndicator state={indicatorState} label={browserActivityLabel} size="sm" /> : null}
+            <StatusBadge tone={status ? statusTone(status.status) : "neutral"}>
+              {status ? statusLabel(status.status) : "Idle"}
+            </StatusBadge>
           </div>
-          <StatusBadge tone={status ? statusTone(status.status) : "neutral"}>
-            {status ? statusLabel(status.status) : "Idle"}
-          </StatusBadge>
         </div>
       </CardHeader>
 
@@ -45,7 +59,7 @@ export function BrowserViewportCard({
                 <Globe2 className="size-4" />
               </div>
               <div className="min-w-0">
-                <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">Evidence feed</p>
+                <p className="font-mono text-[0.68rem] uppercase tracking-[0.2em] text-muted-foreground">Current run</p>
                 <p className="truncate text-sm font-medium text-foreground">
                   {runId ? `Run ${runId}` : "Awaiting a new run"}
                 </p>
@@ -53,20 +67,10 @@ export function BrowserViewportCard({
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
+              {status ? <ActivityIndicator state={indicatorState} label={browserActivityLabel} size="sm" /> : null}
               <StatusBadge tone={status ? statusTone(status.status) : "neutral"}>
                 {status ? statusLabel(status.status) : "Idle"}
               </StatusBadge>
-              <div className="flex items-center gap-1 text-muted-foreground" aria-hidden="true">
-                <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/50">
-                  <ArrowLeft className="size-3.5" />
-                </span>
-                <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/50">
-                  <ArrowRight className="size-3.5" />
-                </span>
-                <span className="flex size-8 items-center justify-center rounded-md border border-border bg-muted/50">
-                  <RefreshCw className="size-3.5" />
-                </span>
-              </div>
             </div>
           </div>
 
@@ -79,13 +83,27 @@ export function BrowserViewportCard({
               />
             ) : (
               <EmptyState
-                title={isIdle ? "Launch a run to watch the browser" : "Waiting on the first screenshot"}
+                title={
+                  isIdle
+                    ? "Start a run to watch the browser"
+                    : indicatorState === "running"
+                      ? "Starting browser"
+                      : "Waiting for the first browser update"
+                }
                 description={
                   isIdle
-                    ? "The center stage shows the live browser surface, captured screenshots, and current step context."
-                    : "The runner will attach browser captures once the first step callback completes."
+                    ? "The browser view becomes the main stage once Minerva starts working."
+                    : indicatorState === "running"
+                      ? "Minerva is actively driving the browser. The first capture will appear as soon as the page settles."
+                      : "Minerva will add browser captures as soon as the first step finishes."
                 }
-                icon={<ImageIcon className="size-5" />}
+                icon={
+                  indicatorState === "running" ? (
+                    <ActivityIndicator state="running" size="lg" />
+                  ) : (
+                    <ImageIcon className="size-5" />
+                  )
+                }
                 className="min-h-[420px] rounded-none border-0 bg-[linear-gradient(180deg,rgba(82,209,200,0.03),transparent_16%),#0c1115]"
               />
             )}
@@ -94,7 +112,7 @@ export function BrowserViewportCard({
           <div className="mt-4 grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px]">
             <div className="rounded-xl border border-border bg-muted/35 p-4">
               <p className="font-mono text-[0.64rem] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Current context
+                What it is doing
               </p>
               <p className="mt-3 text-sm leading-6 text-foreground">
                 {status?.current_step_summary ?? "No active browser step yet."}
@@ -102,7 +120,7 @@ export function BrowserViewportCard({
             </div>
             <div className="rounded-xl border border-border bg-muted/35 p-4">
               <p className="font-mono text-[0.64rem] font-medium uppercase tracking-[0.22em] text-muted-foreground">
-                Last capture
+                Last updated
               </p>
               <p className="mt-3 font-mono text-sm leading-6 text-foreground">
                 {status?.updated_at ? formatTimestamp(status.updated_at) : "Awaiting first update"}

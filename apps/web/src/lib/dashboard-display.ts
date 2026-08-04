@@ -1,6 +1,7 @@
 import type { EventType, RunStatus } from "./types";
 
 export type DashboardTone = "neutral" | "info" | "success" | "warning" | "danger";
+export type RunIndicatorState = "idle" | "running" | "blocked" | "success" | "danger";
 
 const TERMINAL_STATUSES: RunStatus[] = ["succeeded", "failed", "stopped"];
 
@@ -35,11 +36,17 @@ export function formatBytes(size: number): string {
 }
 
 export function statusLabel(status: RunStatus): string {
-  return status.replaceAll("_", " ");
+  return status
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export function connectionLabel(connectionState: string): string {
-  return connectionState.replaceAll("_", " ");
+  return connectionState
+    .split("_")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
 }
 
 export function statusTone(status: RunStatus): DashboardTone {
@@ -56,6 +63,25 @@ export function statusTone(status: RunStatus): DashboardTone {
     case "pending":
     default:
       return "neutral";
+  }
+}
+
+export function runIndicatorState(status: RunStatus, pendingApproval = false): RunIndicatorState {
+  if (pendingApproval || status === "waiting_for_approval") {
+    return "blocked";
+  }
+
+  switch (status) {
+    case "running":
+      return "running";
+    case "succeeded":
+      return "success";
+    case "failed":
+    case "stopped":
+      return "danger";
+    case "pending":
+    default:
+      return "idle";
   }
 }
 

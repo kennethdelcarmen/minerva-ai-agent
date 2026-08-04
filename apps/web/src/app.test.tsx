@@ -73,7 +73,7 @@ function createResultPayload(): ResultArtifactPayload {
     status: createStatus({ status: "succeeded", completed_at: "2026-08-03T10:02:00Z" }),
     result: {
       success: true,
-      final_output: "done",
+      final_output: "# Done\n\n- First finding\n- Second finding\n\nVisit [docs](https://example.com/docs).\n\n```bash\nnpm test\n```",
       steps: 3,
     },
   };
@@ -97,6 +97,14 @@ beforeEach(() => {
   MockEventSource.instances = [];
   vi.stubGlobal("EventSource", MockEventSource);
   window.history.pushState({}, "", "/");
+  Object.defineProperty(window, "scrollTo", {
+    configurable: true,
+    value: vi.fn(),
+  });
+  Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+    configurable: true,
+    value: vi.fn(),
+  });
 });
 
 afterEach(() => {
@@ -105,15 +113,14 @@ afterEach(() => {
 });
 
 describe("operator console", () => {
-  it("renders the idle shell with a live composer and placeholder panels", async () => {
+  it("renders the guided idle shell", () => {
     render(<App />);
 
-    expect(screen.getByRole("heading", { name: "Operator Console" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Launch run" })).toBeInTheDocument();
-    expect(screen.getByText("Browser viewport")).toBeInTheDocument();
-    expect(screen.getByText("Operator insight")).toBeInTheDocument();
-    expect(screen.getByText("No reasoning events yet.")).toBeInTheDocument();
-    expect(screen.getByText("Launch a run to watch the browser")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Start run" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "What Minerva sees" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Activity and answer" })).toBeInTheDocument();
+    expect(screen.getByText("Status updates will appear here")).toBeInTheDocument();
   });
 
   it("creates a run and transitions to the run route", async () => {
@@ -138,14 +145,14 @@ describe("operator console", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    await user.type(screen.getByLabelText("Goal"), "Open example.com and summarize the page");
-    await user.click(screen.getByRole("button", { name: "Launch run" }));
+    await user.type(screen.getByLabelText("What should Minerva do?"), "Open example.com and summarize the page");
+    await user.click(screen.getByRole("button", { name: "Start run" }));
 
-    await screen.findByRole("heading", { name: "Run run-123" });
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
     expect(window.location.pathname).toBe("/runs/run-123");
   });
 
-  it("renders streamed events from the SSE connection", async () => {
+  it("renders streamed activity events from the SSE connection", async () => {
     installFetchMock((input) => {
       const url = input.toString();
 
@@ -163,7 +170,7 @@ describe("operator console", () => {
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Run run-123" });
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
 
     await act(async () => {
       MockEventSource.instances[0].emit("plan", {
@@ -177,13 +184,48 @@ describe("operator console", () => {
       });
     });
 
-    await waitFor(() => {
-      const reasoningPanel = screen.getByRole("tabpanel", { name: "Reasoning" });
-      expect(within(reasoningPanel).getAllByText("Searching the pricing page.").length).toBeGreaterThanOrEqual(2);
-    });
+    const activityPanel = screen.getByRole("tabpanel", { name: "Activity" });
+    expect(within(activityPanel).getAllByText("Searching the pricing page.").length).toBeGreaterThanOrEqual(1);
   });
 
-  it("submits approval decisions", async () => {
+  it("renders the refreshed run summary with a primary step panel and operator controls", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ current_step_summary: "Searching the pricing page." }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const summaryHeading = await screen.findByRole("heading", { name: "What Minerva is doing" });
+    const summaryCard = summaryHeading.closest("[data-slot='card']");
+
+    expect(summaryCard).not.toBeNull();
+
+    const summary = within(summaryCard as HTMLElement);
+    expect(summary.getByText("Current step")).toBeInTheDocument();
+    expect(summary.getByText("Searching the pricing page.")).toBeInTheDocument();
+    expect(summary.getByText("Run details")).toBeInTheDocument();
+    expect(summary.getByRole("button", { name: "Stop run" })).toBeInTheDocument();
+    expect(summary.getByRole("button", { name: "New run" })).toBeInTheDocument();
+    expect(summary.getByText("Minerva is actively working through the current task.")).toBeInTheDocument();
+
+    const commandBar = screen.getByRole("region", { name: "Run command bar" });
+    expect(within(commandBar).getByText("Run in progress")).toBeInTheDocument();
+    expect(within(commandBar).getByText("Searching the pricing page.")).toBeInTheDocument();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).not.toBeNull();
+  });
+
+  it("opens a blocking approval modal when approval is already pending", async () => {
     installFetchMock((input, init) => {
       const url = input.toString();
 
@@ -217,8 +259,18 @@ describe("operator console", () => {
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    await screen.findByText("Approval required");
-    await userEvent.click(screen.getByRole("button", { name: "Approve" }));
+    expect(
+      await screen.findByText(
+        "Minerva is blocked on your review. Approve or reject the pending action to continue the run.",
+      ),
+    ).toBeInTheDocument();
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
+    expect(within(dialog).getByText("Click requires approval.")).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe("hidden");
+    expect(within(dialog).queryByRole("button", { name: "Close modal" })).not.toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Approve" }));
 
     await waitFor(() => {
       expect(fetch).toHaveBeenCalledWith(
@@ -228,11 +280,11 @@ describe("operator console", () => {
     });
   });
 
-  it("stops an active run", async () => {
-    installFetchMock((input, init) => {
+  it("opens the approval modal from a streamed approval event", async () => {
+    installFetchMock((input) => {
       const url = input.toString();
 
-      if (url.endsWith("/runs/run-123") && !init?.method) {
+      if (url.endsWith("/runs/run-123")) {
         return jsonResponse(createStatus());
       }
 
@@ -240,28 +292,42 @@ describe("operator console", () => {
         return jsonResponse({ run_id: "run-123", artifacts: [] });
       }
 
-      if (url.endsWith("/runs/run-123/stop") && init?.method === "POST") {
-        return jsonResponse(createStatus({ status: "stopped", completed_at: "2026-08-03T10:01:00Z" }));
-      }
-
-      throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
+      throw new Error(`Unhandled request: GET ${url}`);
     });
 
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    await screen.findByRole("button", { name: "Stop run" });
-    await userEvent.click(screen.getByRole("button", { name: "Stop run" }));
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
 
-    await waitFor(() => {
-      expect(fetch).toHaveBeenCalledWith(
-        "http://127.0.0.1:8000/runs/run-123/stop",
-        expect.objectContaining({ method: "POST" }),
-      );
+    await act(async () => {
+      MockEventSource.instances[0].emit("approval", {
+        id: "event-approval",
+        run_id: "run-123",
+        sequence: 4,
+        type: "approval",
+        summary: 'Approval required for "click".',
+        timestamp: "2026-08-03T10:00:03Z",
+        data: {
+          approval_id: "approval-2",
+          action_name: "click",
+          params: { index: 4 },
+          reason: "This click opens an external checkout page.",
+        },
+      });
     });
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
+    expect(within(dialog).getByText("This click opens an external checkout page.")).toBeInTheDocument();
+
+    const commandBar = screen.getByRole("region", { name: "Run command bar" });
+    expect(within(commandBar).getByText("Waiting for your review")).toBeInTheDocument();
+    expect(within(commandBar).getByText('Approval required for "click".')).toBeInTheDocument();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).toBeNull();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="blocked"]')).not.toBeNull();
   });
 
-  it("renders the terminal result and artifact links", async () => {
+  it("renders markdown in the terminal result modal and keeps artifact links available", async () => {
     installFetchMock((input) => {
       const url = input.toString();
 
@@ -289,12 +355,48 @@ describe("operator console", () => {
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    const dialog = await screen.findByRole("dialog", { name: "Final output" });
-    expect(within(dialog).getByText("done")).toBeInTheDocument();
-    expect(within(dialog).getByText(/final_output/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "View output" })).toBeInTheDocument();
+    const dialog = await screen.findByRole("dialog", { name: "Final answer" });
+    expect(within(dialog).getByRole("heading", { name: "Done" })).toBeInTheDocument();
+    expect(within(dialog).getByText("First finding")).toBeInTheDocument();
+    expect(within(dialog).getByText("Second finding")).toBeInTheDocument();
+    expect(within(dialog).getByRole("link", { name: "docs" })).toHaveAttribute(
+      "href",
+      "https://example.com/docs",
+    );
+    expect(within(dialog).getByText("npm test")).toBeInTheDocument();
+
+    await userEvent.click(within(dialog).getByRole("button", { name: "Close" }));
+
+    expect(await screen.findByRole("button", { name: "View full answer" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /result.json/i })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Stop run" })).not.toBeInTheDocument();
+  });
+
+  it("renders long goals in the run summary without truncating the text", async () => {
+    const longTask =
+      "Open the pricing page, compare the Pro and Enterprise plans, capture the differences in automation limits, and stop before any checkout step.";
+
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ task: longTask }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const summaryHeading = await screen.findByRole("heading", { name: "What Minerva is doing" });
+    const summaryCard = summaryHeading.closest("[data-slot='card']");
+
+    expect(summaryCard).not.toBeNull();
+    expect(within(summaryCard as HTMLElement).getByText(longTask)).toBeInTheDocument();
   });
 
   it("reloads status when the run page becomes visible again", async () => {
@@ -318,8 +420,8 @@ describe("operator console", () => {
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    await screen.findByRole("heading", { name: "Run run-123" });
-    expect(screen.getByRole("heading", { name: "Run state" })).toBeInTheDocument();
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+    expect(screen.getByRole("heading", { name: "What Minerva is doing" })).toBeInTheDocument();
     expect(screen.getAllByText("Refresh 1").length).toBeGreaterThan(0);
 
     await act(async () => {
@@ -329,5 +431,177 @@ describe("operator console", () => {
     await waitFor(() => {
       expect(statusCalls).toBeGreaterThanOrEqual(2);
     });
+  });
+
+  it("updates the sticky command bar when streamed activity changes", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ current_step_summary: "Open the homepage." }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    expect(within(commandBar).getByText("Open the homepage.")).toBeInTheDocument();
+
+    await act(async () => {
+      MockEventSource.instances[0].emit("action", {
+        id: "event-action",
+        run_id: "run-123",
+        sequence: 2,
+        type: "action",
+        summary: "Inspecting the navigation menu.",
+        timestamp: "2026-08-03T10:00:03Z",
+        data: {},
+      });
+    });
+
+    expect(within(commandBar).getByText("Inspecting the navigation menu.")).toBeInTheDocument();
+  });
+
+  it("shows a running browser indicator before the first screenshot arrives", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ current_step_summary: "Launching the visible browser." }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const browserHeading = await screen.findByRole("heading", { name: "What Minerva sees" });
+    const browserCard = browserHeading.closest("[data-slot='card']");
+
+    expect(browserCard).not.toBeNull();
+
+    const browser = within(browserCard as HTMLElement);
+    expect(browser.getAllByText("Browser live").length).toBeGreaterThan(0);
+    expect(browser.getByText("Starting browser")).toBeInTheDocument();
+    expect(
+      (browserCard as HTMLElement).querySelector('[data-slot="activity-indicator"][data-state="running"]'),
+    ).not.toBeNull();
+  });
+
+  it("switches the sticky command bar to start another run and focuses the inline launcher", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(
+          createStatus({
+            status: "succeeded",
+            current_step_summary: "Summary delivered to the operator.",
+            completed_at: "2026-08-03T10:02:00Z",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    const scrollIntoViewMock = vi.mocked(HTMLElement.prototype.scrollIntoView);
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    expect(within(commandBar).getByText("Run complete")).toBeInTheDocument();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).toBeNull();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="success"]')).not.toBeNull();
+
+    const launcherHeading = screen.getByRole("heading", { name: "Start another run" });
+    expect(launcherHeading).toBeInTheDocument();
+
+    await userEvent.click(within(commandBar).getByRole("button", { name: "Start another run" }));
+
+    expect(window.location.pathname).toBe("/runs/run-123");
+    expect(scrollIntoViewMock).toHaveBeenCalled();
+    expect(screen.getByLabelText("What should Minerva do?")).toHaveFocus();
+  });
+
+  it("resets scroll position after starting a new run from the run page", async () => {
+    installFetchMock((input, init) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123") && !init?.method) {
+        return jsonResponse(
+          createStatus({
+            status: "succeeded",
+            current_step_summary: "Initial run complete.",
+            completed_at: "2026-08-03T10:02:00Z",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            status: "running",
+            current_step_summary: "Second run started.",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      if (url.endsWith("/runs/run-456")) {
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            status: "running",
+            current_step_summary: "Second run started.",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-456/artifacts")) {
+        return jsonResponse({ run_id: "run-456", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const launcherHeading = await screen.findByRole("heading", { name: "Start another run" });
+    const launcherCard = launcherHeading.closest("[data-slot='card']");
+
+    expect(launcherCard).not.toBeNull();
+
+    const launcher = within(launcherCard as HTMLElement);
+    await userEvent.type(launcher.getByLabelText("What should Minerva do?"), "Open docs and summarize changes");
+    await userEvent.click(launcher.getByRole("button", { name: "Start run" }));
+
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+    await waitFor(() => {
+      expect(window.location.pathname).toBe("/runs/run-456");
+    });
+    expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
   });
 });

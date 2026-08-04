@@ -1,11 +1,11 @@
 import type { ReactNode } from "react";
 
-import { AlertTriangle, CircleDashed } from "lucide-react";
+import { AlertTriangle, CheckCircle2, CircleDashed, LoaderCircle, TriangleAlert } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Skeleton } from "@/components/ui/skeleton";
-import type { DashboardTone } from "@/src/lib/dashboard-display";
+import type { DashboardTone, RunIndicatorState } from "@/src/lib/dashboard-display";
 import { cn } from "@/lib/utils";
 
 const toneClasses: Record<DashboardTone, string> = {
@@ -23,6 +23,29 @@ const toneStripes: Record<DashboardTone, string> = {
   warning: "bg-[#f2a65a]/45",
   danger: "bg-destructive/45",
 };
+
+const indicatorTones: Record<RunIndicatorState, string> = {
+  idle: "text-muted-foreground",
+  running: "text-primary",
+  blocked: "text-[#ffd9ae]",
+  success: "text-primary",
+  danger: "text-[#ffd1d1]",
+};
+
+const indicatorSizes = {
+  sm: {
+    icon: "size-3.5",
+    text: "text-[0.68rem]",
+  },
+  md: {
+    icon: "size-4",
+    text: "text-xs",
+  },
+  lg: {
+    icon: "size-5",
+    text: "text-sm",
+  },
+} as const;
 
 export function StatusBadge({
   tone = "neutral",
@@ -98,6 +121,48 @@ export function EmptyState({
         <p className="max-w-sm text-sm leading-6 text-muted-foreground">{description}</p>
       </div>
     </div>
+  );
+}
+
+export function ActivityIndicator({
+  state,
+  label,
+  size = "sm",
+  className,
+}: {
+  state: RunIndicatorState;
+  label?: string;
+  size?: keyof typeof indicatorSizes;
+  className?: string;
+}) {
+  const sizeClasses = indicatorSizes[size];
+  const toneClass = indicatorTones[state];
+
+  return (
+    <span
+      data-slot="activity-indicator"
+      data-state={state}
+      className={cn(
+        "inline-flex items-center gap-2 font-mono font-medium uppercase tracking-[0.18em]",
+        toneClass,
+        sizeClasses.text,
+        className,
+      )}
+      role={state === "running" ? "status" : undefined}
+    >
+      {state === "running" ? (
+        <LoaderCircle className={cn(sizeClasses.icon, "animate-spin motion-reduce:animate-none")} aria-hidden="true" />
+      ) : state === "blocked" ? (
+        <TriangleAlert className={sizeClasses.icon} aria-hidden="true" />
+      ) : state === "success" ? (
+        <CheckCircle2 className={sizeClasses.icon} aria-hidden="true" />
+      ) : state === "danger" ? (
+        <AlertTriangle className={sizeClasses.icon} aria-hidden="true" />
+      ) : (
+        <CircleDashed className={sizeClasses.icon} aria-hidden="true" />
+      )}
+      {label ? <span>{label}</span> : null}
+    </span>
   );
 }
 

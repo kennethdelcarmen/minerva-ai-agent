@@ -1,12 +1,13 @@
-import { startTransition, useEffect, useState, type FormEvent } from "react";
+import { startTransition, useEffect, useRef, useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
 
-import { ApprovalPanel } from "@/components/dashboard/approval-panel";
+import { ApprovalModal } from "@/components/dashboard/approval-modal";
 import { BrowserViewportCard } from "@/components/dashboard/browser-viewport-card";
 import { DashboardShell } from "@/components/dashboard/dashboard-shell";
 import { ScreenPanel, SignalTile } from "@/components/dashboard/dashboard-primitives";
 import { InsightPanel } from "@/components/dashboard/insight-panel";
 import { LauncherCard } from "@/components/dashboard/launcher-card";
+import { RunCommandBar } from "@/components/dashboard/run-command-bar";
 import { RunSummaryCard } from "@/components/dashboard/run-summary-card";
 
 import {
@@ -86,6 +87,7 @@ function usePathname() {
 
   function navigate(nextPath: string) {
     window.history.pushState({}, "", nextPath);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
     setPathname(nextPath);
   }
 
@@ -122,14 +124,12 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
 
   return (
     <DashboardShell
-      title="Operator Console"
-      lede="Issue a run brief, monitor the live browser state, and intercept approval-gated actions before they commit."
       bannerMeta={
         <>
-          <SignalTile label="Mode" value="Idle" tone="neutral" detail="Console is ready for the next operator brief." />
-          <SignalTile label="Composer" value="Ready" tone="info" detail="Natural-language briefing with constraints and stop line." />
-          <SignalTile label="Stream" value="No run" tone="neutral" detail="Live event transport is waiting on a run." />
-          <SignalTile label="Artifacts" value="Waiting" tone="neutral" detail="Screenshots and result exports attach per run." />
+          <SignalTile label="Status" value="Ready" tone="success" detail="Minerva is ready for a new task." />
+          <SignalTile label="Approvals" value="On" tone="warning" detail="Sensitive actions still pause for your review." />
+          <SignalTile label="Browser" value="Waiting" tone="neutral" detail="The browser view appears after a run starts." />
+          <SignalTile label="Answer" value="Markdown" tone="info" detail="Final answers are rendered for easy reading." />
         </>
       }
       leftRail={
@@ -144,18 +144,10 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
             submitting={isSubmitting}
             submitError={submitError}
             onSubmit={handleSubmit}
-            helperText="Write the run brief the operator wants executed, including hard constraints and where the agent must stop."
+            helperText="Describe the job in plain language and say exactly where Minerva should stop and ask you."
           />
 
           <RunSummaryCard status={null} connectionState="idle" navigate={navigate} />
-          <ApprovalPanel
-            pendingApproval={null}
-            note=""
-            onNoteChange={() => undefined}
-            onApprove={() => undefined}
-            onReject={() => undefined}
-            busy={false}
-          />
         </>
       }
       centerStage={
@@ -192,6 +184,8 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   const [approvalNote, setApprovalNote] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const launcherAnchorRef = useRef<HTMLDivElement | null>(null);
+  const launcherTaskRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -426,6 +420,11 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
     }
   }
 
+  function handleStartAnotherRun() {
+    launcherAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    launcherTaskRef.current?.focus();
+  }
+
   if (loading) {
     return (
       <ScreenPanel
@@ -452,98 +451,107 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   }
 
   return (
-    <DashboardShell
-      title={`Run ${status.run_id}`}
-      lede={status.task}
-      mobileLayout="stage-first"
-      bannerMeta={
-        <>
-          <SignalTile
-            label="Status"
-            value={statusLabel(status.status)}
-            tone={statusTone(status.status)}
-            detail="Current run lifecycle state."
-          />
-          <SignalTile label="Model" value={status.model} tone="info" detail="Execution model for this run." />
-          <SignalTile
-            label="Stream"
-            value={connectionLabel(connectionState)}
-            tone={connectionTone(connectionState)}
-            detail="SSE delivery health for live updates."
-          />
-          <SignalTile
-            label="Updated"
-            value={formatTimestamp(status.updated_at)}
-            tone="neutral"
-            detail="Last snapshot refresh from the backend."
-          />
-        </>
-      }
-      bannerAction={
-        <Button
-          type="button"
-          variant="outline"
-          size="icon"
-          className="rounded-xl"
-          onClick={() => navigate("/")}
-          aria-label="New run"
-          title="New run"
-        >
-          <Plus className="size-4" />
-          <span className="sr-only">New run</span>
-        </Button>
-      }
-      leftRail={
-        <>
-          <LauncherCard
-            task={newRunTask}
-            setTask={setNewRunTask}
-            model={newRunModel}
-            setModel={setNewRunModel}
-            headless={newRunHeadless}
-            setHeadless={setNewRunHeadless}
-            submitting={newRunSubmitting}
-            submitError={newRunError}
-            onSubmit={handleCreateRun}
-            helperText="Queue a fresh run brief from the same console without interrupting the current one."
-          />
-
-          <RunSummaryCard
+    <>
+      <DashboardShell
+        className="pb-32 sm:pb-36"
+        mobileLayout="stage-first"
+        bannerMeta={
+          <>
+            <SignalTile
+              label="Status"
+              value={statusLabel(status.status)}
+              tone={statusTone(status.status)}
+              detail="Current run lifecycle state."
+            />
+            <SignalTile label="Stream" value={connectionLabel(connectionState)} tone={connectionTone(connectionState)} detail="Live update connection health." />
+            <SignalTile label="Updated" value={formatTimestamp(status.updated_at)} tone="neutral" detail="Last update received from the backend." />
+            <SignalTile
+              label="Decision"
+              value={status.pending_approval ? "Needed" : "Clear"}
+              tone={status.pending_approval ? "warning" : "success"}
+              detail="Whether Minerva is waiting on your approval."
+            />
+          </>
+        }
+        bannerAction={
+          <Button
+            type="button"
+            variant="outline"
+            className="rounded-xl px-4"
+            onClick={() => navigate("/")}
+          >
+            <Plus className="size-4" />
+            New run
+          </Button>
+        }
+        leftRail={
+          <>
+            <RunSummaryCard
+              status={status}
+              connectionState={connectionState}
+              onStop={handleStop}
+              stopBusy={stopBusy}
+              navigate={navigate}
+            />
+            <div id="next-run-launcher" ref={launcherAnchorRef} className="scroll-mt-6">
+              <LauncherCard
+                task={newRunTask}
+                setTask={setNewRunTask}
+                model={newRunModel}
+                setModel={setNewRunModel}
+                headless={newRunHeadless}
+                setHeadless={setNewRunHeadless}
+                submitting={newRunSubmitting}
+                submitError={newRunError}
+                onSubmit={handleCreateRun}
+                eyebrow="Next run"
+                title={isTerminalStatus(status.status) ? "Start another run" : "Queue another task"}
+                helperText={
+                  isTerminalStatus(status.status)
+                    ? "This run is finished. Start the next task here without losing the current result."
+                    : "Want to start another task? Queue it here without leaving the current run page."
+                }
+                taskInputRef={launcherTaskRef}
+              />
+            </div>
+          </>
+        }
+        centerStage={
+          <BrowserViewportCard
+            runId={runId}
             status={status}
-            connectionState={connectionState}
-            onStop={handleStop}
-            stopBusy={stopBusy}
-            navigate={navigate}
+            screenshotPath={screenshotPath}
+            artifactUrl={artifactUrl}
           />
-          <ApprovalPanel
-            pendingApproval={status.pending_approval}
-            note={approvalNote}
-            onNoteChange={setApprovalNote}
-            onApprove={() => void handleApproval("approve")}
-            onReject={() => void handleApproval("reject")}
-            busy={approvalBusy}
+        }
+        rightRail={
+          <InsightPanel
+            runId={runId}
+            status={status}
+            events={events}
+            artifacts={artifacts}
+            resultPayload={resultPayload}
+            artifactUrl={artifactUrl}
           />
-        </>
-      }
-      centerStage={
-        <BrowserViewportCard
-          runId={runId}
-          status={status}
-          screenshotPath={screenshotPath}
-          artifactUrl={artifactUrl}
-        />
-      }
-      rightRail={
-        <InsightPanel
-          runId={runId}
-          status={status}
-          events={events}
-          artifacts={artifacts}
-          resultPayload={resultPayload}
-          artifactUrl={artifactUrl}
-        />
-      }
-    />
+        }
+      />
+      <RunCommandBar
+        status={status}
+        stopBusy={stopBusy}
+        onStop={!isTerminalStatus(status.status) ? () => void handleStop() : undefined}
+        onStartAnotherRun={handleStartAnotherRun}
+      />
+      <ApprovalModal
+        pendingApproval={status.pending_approval}
+        note={approvalNote}
+        onNoteChange={setApprovalNote}
+        onApprove={() => void handleApproval("approve")}
+        onReject={() => void handleApproval("reject")}
+        onStop={() => void handleStop()}
+        busy={approvalBusy}
+        stopBusy={stopBusy}
+      />
+    </>
   );
 }
 

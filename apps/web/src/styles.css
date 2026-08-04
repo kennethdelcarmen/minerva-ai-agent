@@ -169,6 +169,89 @@
   }
 }
 
+@layer components {
+  .markdown-content {
+    @apply space-y-4 text-sm leading-7 text-foreground;
+  }
+
+  .markdown-content h1,
+  .markdown-content h2,
+  .markdown-content h3,
+  .markdown-content h4,
+  .markdown-content h5,
+  .markdown-content h6 {
+    @apply font-heading font-semibold tracking-[0.01em] text-white;
+  }
+
+  .markdown-content h1 {
+    @apply text-2xl;
+  }
+
+  .markdown-content h2 {
+    @apply text-xl;
+  }
+
+  .markdown-content h3 {
+    @apply text-lg;
+  }
+
+  .markdown-content p {
+    @apply text-sm leading-7 text-foreground;
+  }
+
+  .markdown-content ul,
+  .markdown-content ol {
+    @apply space-y-2 pl-5;
+  }
+
+  .markdown-content ul {
+    list-style: disc;
+  }
+
+  .markdown-content ol {
+    list-style: decimal;
+  }
+
+  .markdown-content li {
+    @apply pl-1;
+  }
+
+  .markdown-content blockquote {
+    @apply space-y-3 rounded-r-xl border-l-2 border-primary/45 bg-white/4 px-4 py-3 text-[#e6ded0];
+  }
+
+  .markdown-content pre {
+    @apply overflow-x-auto rounded-xl border border-border bg-black px-4 py-4 text-[#f7efe2];
+  }
+
+  .markdown-content pre code {
+    @apply block whitespace-pre font-mono text-xs leading-6;
+  }
+
+  .markdown-content .markdown-code-label {
+    @apply mb-3 block font-mono text-[0.66rem] uppercase tracking-[0.2em] text-muted-foreground;
+  }
+
+  .markdown-preview > :not(:first-child) {
+    @apply mt-4;
+  }
+
+  .markdown-preview {
+    max-height: 20rem;
+    overflow: hidden;
+    position: relative;
+  }
+
+  .markdown-preview::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0;
+    height: 4rem;
+    background: linear-gradient(180deg, rgba(13, 19, 23, 0), rgba(13, 19, 23, 1));
+    pointer-events: none;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   *,
   *::before,
