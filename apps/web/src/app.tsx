@@ -1,4 +1,4 @@
-import { startTransition, useEffect, useRef, useState, type FormEvent } from "react";
+import { startTransition, useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
 import { Plus } from "lucide-react";
 
 import { ApprovalModal } from "@/components/dashboard/approval-modal";
@@ -570,10 +570,22 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 }
 
 function NotFoundPage({ navigate }: { navigate: (path: string) => void }) {
+  const redirectHome = useEffectEvent(() => {
+    navigate("/");
+  });
+
+  useEffect(() => {
+    const redirectTimer = window.setTimeout(() => {
+      redirectHome();
+    }, 3000);
+
+    return () => window.clearTimeout(redirectTimer);
+  }, []);
+
   return (
     <ScreenPanel
-      title="Unknown route"
-      description="Use the launcher to start a new browser task or open a known run URL."
+      title="404 | Route not found"
+      description="This page does not exist. You will be redirected to the launcher in 3 seconds."
       action={
         <Button type="button" className="rounded-xl" onClick={() => navigate("/")}>
           Go to launcher

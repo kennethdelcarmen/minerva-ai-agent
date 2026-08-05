@@ -109,6 +109,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -122,6 +123,23 @@ describe("operator console", () => {
     expect(screen.getByRole("heading", { name: "What Minerva sees" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Activity and answer" })).toBeInTheDocument();
     expect(screen.getByText("Status updates will appear here")).toBeInTheDocument();
+  });
+
+  it("redirects unknown routes back to the launcher after 3 seconds", async () => {
+    vi.useFakeTimers();
+    window.history.pushState({}, "", "/missing");
+
+    render(<App />);
+
+    expect(screen.getByRole("heading", { name: "404 | Route not found" })).toBeInTheDocument();
+    expect(screen.getByText("This page does not exist. You will be redirected to the launcher in 3 seconds.")).toBeInTheDocument();
+
+    await act(async () => {
+      vi.advanceTimersByTime(3000);
+    });
+
+    expect(window.location.pathname).toBe("/");
+    expect(screen.getByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
   });
 
   it("creates a run and transitions to the run route", async () => {
