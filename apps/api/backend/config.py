@@ -35,6 +35,7 @@ class Settings(BaseSettings):
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     max_steps: int = Field(default=25, alias="MAX_STEPS")
+    event_subscriber_queue_size: int = Field(default=128, alias="EVENT_SUBSCRIBER_QUEUE_SIZE", ge=1)
     cors_allow_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="CORS_ALLOW_ORIGINS",

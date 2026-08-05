@@ -18,7 +18,7 @@ os.environ.setdefault("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
 
 from backend.api.app import create_app
 from backend.config import Settings
-from backend.contracts.models import EventType
+from backend.contracts.models import CreateRunRequest, EventType, RunEvent
 
 
 class FakeRunner:
@@ -227,3 +227,75 @@ def test_artifact_path_traversal_is_rejected(settings: Settings) -> None:
 
         traversal = client.get(f"/runs/{run_id}/artifacts/..%2Foutside.txt")
         assert traversal.status_code == 400
+
+
+def test_completed_run_streams_events_from_disk_after_eviction(settings: Settings) -> None:
+    runner = FakeRunner()
+    service = RunService(settings, runner)
+    app = create_app(settings=settings, run_service=service)
+
+    with TestClient(app) as client:
+        run_id = client.post("/runs", json={"task": "Replay persisted events"}).json()["run_id"]
+        wait_for_status(client, run_id, "succeeded")
+
+        deadline = time.time() + 2.0
+        while time.time() < deadline and run_id in service._runs:
+            time.sleep(0.01)
+
+        assert run_id not in service._runs
+
+        with client.stream("GET", f"/runs/{run_id}/events") as response:
+            body = "".join(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk for chunk in response.iter_raw())
+
+        assert "event: plan" in body
+        assert "event: result" in body
+
+
+@pytest.mark.asyncio
+async def test_completed_runs_are_evicted_from_memory(settings: Settings) -> None:
+    runner = FakeRunner()
+    service = RunService(settings, runner)
+
+    created = await service.create_run(CreateRunRequest(task="Evict completed run"))
+
+    deadline = time.time() + 2.0
+    while time.time() < deadline and created.run_id in service._runs:
+        await asyncio.sleep(0.01)
+
+    assert created.run_id not in service._runs
+
+    status = await service.get_run(created.run_id)
+    assert status.status.value == "succeeded"
+
+
+def test_subscriber_backlog_is_bounded(settings: Settings) -> None:
+    bounded_settings = Settings(
+        OPENROUTER_API_KEY="test-key",
+        ARTIFACT_ROOT=settings.artifact_root,
+        HEADLESS=True,
+        OPENROUTER_MODEL="google/gemini-2.5-flash:free",
+        EVENT_SUBSCRIBER_QUEUE_SIZE=3,
+    )
+    service = RunService(bounded_settings, FakeRunner())
+    queue: asyncio.Queue[RunEvent | None] = asyncio.Queue(maxsize=3)
+
+    for sequence in range(1, 6):
+        service._enqueue(
+            queue,
+            RunEvent(
+                run_id="run-1",
+                sequence=sequence,
+                type=EventType.OBSERVATION,
+                summary=f"event {sequence}",
+            ),
+        )
+
+    assert queue.qsize() == 3
+
+    retained_sequences: list[int] = []
+    while not queue.empty():
+        retained = queue.get_nowait()
+        assert retained is not None
+        retained_sequences.append(retained.sequence)
+
+    assert retained_sequences == [3, 4, 5]

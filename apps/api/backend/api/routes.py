@@ -78,23 +78,14 @@ async def get_artifact(run_id: str, artifact_path: str, service: RunService = De
 @router.get("/runs/{run_id}/events")
 async def stream_run_events(run_id: str, service: RunService = Depends(get_run_service)) -> StreamingResponse:
     try:
-        queue = await service.subscribe(run_id)
+        event_source = service.event_stream(run_id)
     except KeyError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
     async def event_stream():
-        try:
-            while True:
-                event = await queue.get()
-                if event is None:
-                    break
-                payload = event.model_dump(mode="json")
-                yield f"event: {event.type.value}\n"
-                yield f"data: {json.dumps(payload)}\n\n"
-        finally:
-            try:
-                await service.unsubscribe(run_id, queue)
-            except KeyError:
-                pass
+        async for event in event_source:
+            payload = event.model_dump(mode="json")
+            yield f"event: {event.type.value}\n"
+            yield f"data: {json.dumps(payload)}\n\n"
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
