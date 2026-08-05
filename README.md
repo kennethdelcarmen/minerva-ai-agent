@@ -45,6 +45,26 @@ cd apps/api
 uv run pytest
 ```
 
+## Dockerized Backend
+
+Create `apps/api/.env` from the example file and set a real `OPENROUTER_API_KEY`:
+
+```bash
+cp apps/api/.env.example apps/api/.env
+```
+
+Start the API container:
+
+```bash
+docker compose up --build api
+```
+
+Notes:
+
+- The container runs browser automation headlessly by default.
+- Run artifacts persist on the host at `apps/api/.runs`.
+- The API is exposed at `http://127.0.0.1:8000`.
+
 ## Frontend Setup
 
 ```bash

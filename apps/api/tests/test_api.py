@@ -84,6 +84,14 @@ def wait_for_status(client: TestClient, run_id: str, expected: str, timeout: flo
     raise AssertionError(f"run did not reach status {expected!r}; last status was {last_status}")
 
 
+def test_healthcheck(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.get("/healthz")
+        assert response.status_code == 200
+        assert response.json() == {"status": "ok"}
+
+
 def test_create_run_and_status(settings: Settings) -> None:
     runner = FakeRunner()
     with create_test_client(settings, runner) as client:

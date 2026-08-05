@@ -14,6 +14,11 @@ from backend.contracts.models import ApprovalDecisionRequest, CreateRunRequest, 
 router = APIRouter()
 
 
+@router.get("/healthz")
+async def healthcheck() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 @router.post("/runs", response_model=RunStatusResponse, status_code=201)
 async def create_run(request: CreateRunRequest, service: RunService = Depends(get_run_service)) -> RunStatusResponse:
     return await service.create_run(request)
