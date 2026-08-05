@@ -6,6 +6,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
+from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     max_steps: int = Field(default=25, alias="MAX_STEPS")
     event_subscriber_queue_size: int = Field(default=128, alias="EVENT_SUBSCRIBER_QUEUE_SIZE", ge=1)
+    enable_step_timings: bool = Field(default=True, alias="ENABLE_STEP_TIMINGS")
+    step_screenshot_interval: int = Field(default=3, alias="STEP_SCREENSHOT_INTERVAL", ge=0)
+    include_step_browser_state: bool = Field(default=False, alias="INCLUDE_STEP_BROWSER_STATE")
+    approval_mode: Literal["strict", "speed"] = Field(default="speed", alias="APPROVAL_MODE")
     cors_allow_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="CORS_ALLOW_ORIGINS",

@@ -1,5 +1,5 @@
 import { startTransition, useEffect, useEffectEvent, useRef, useState, type FormEvent } from "react";
-import { Plus } from "lucide-react";
+import { AlertTriangle, Plus } from "lucide-react";
 
 import { ApprovalModal } from "@/components/dashboard/approval-modal";
 import { BrowserViewportCard } from "@/components/dashboard/browser-viewport-card";
@@ -11,12 +11,14 @@ import { RunCommandBar } from "@/components/dashboard/run-command-bar";
 import { RunSummaryCard } from "@/components/dashboard/run-summary-card";
 
 import {
+  ApiError,
   artifactUrl,
   createRun,
   decideApproval,
   fetchArtifacts,
   fetchResultArtifact,
   fetchRunStatus,
+  isApiError,
   runEventsUrl,
   stopRun,
 } from "./lib/api";
@@ -40,9 +42,18 @@ import { Button } from "@/components/ui/button";
 
 const EVENT_TYPES: EventType[] = ["plan", "action", "observation", "approval", "error", "result"];
 const GENERIC_FAILURE_MESSAGES = new Set(["failed", "run failed"]);
+type RunAvailability = "available" | "unavailable";
 
 function getErrorMessage(error: unknown): string {
+  if (isApiError(error)) {
+    return error.detail;
+  }
+
   return error instanceof Error ? error.message : "Unexpected error";
+}
+
+function isRunUnavailableError(error: unknown): error is ApiError {
+  return isApiError(error) && error.status === 404;
 }
 
 function normalizeMessage(message: string | null | undefined): string | null {
@@ -210,16 +221,44 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   const [screenshotPath, setScreenshotPath] = useState<string | null>(null);
   const [connectionState, setConnectionState] = useState("connecting");
   const [pageError, setPageError] = useState<string | null>(null);
+  const [runAvailability, setRunAvailability] = useState<RunAvailability>("available");
   const [loading, setLoading] = useState(true);
-  const [newRunTask, setNewRunTask] = useState("");
-  const [newRunModel, setNewRunModel] = useState("");
-  const [newRunSubmitting, setNewRunSubmitting] = useState(false);
-  const [newRunError, setNewRunError] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
-  const launcherAnchorRef = useRef<HTMLDivElement | null>(null);
-  const launcherTaskRef = useRef<HTMLTextAreaElement | null>(null);
+  const artifactsRef = useRef<ArtifactDescriptor[]>([]);
+  const resultPayloadRef = useRef<ResultArtifactPayload | null>(null);
+
+  const markRunUnavailable = useEffectEvent((error: unknown) => {
+    setRunAvailability("unavailable");
+    setStatus(null);
+    setArtifacts([]);
+    setEvents([]);
+    setResultPayload(null);
+    setScreenshotPath(null);
+    setConnectionState("idle");
+    setPageError(getErrorMessage(error));
+  });
+
+  useEffect(() => {
+    setRunAvailability("available");
+    setLoading(true);
+    setPageError(null);
+    setStatus(null);
+    setArtifacts([]);
+    setEvents([]);
+    setResultPayload(null);
+    setScreenshotPath(null);
+    setConnectionState("connecting");
+  }, [runId]);
+
+  useEffect(() => {
+    artifactsRef.current = artifacts;
+  }, [artifacts]);
+
+  useEffect(() => {
+    resultPayloadRef.current = resultPayload;
+  }, [resultPayload]);
 
   useEffect(() => {
     let active = true;
@@ -235,10 +274,15 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
         setArtifacts(snapshot.artifacts);
         setScreenshotPath(snapshot.screenshotPath);
         setResultPayload(snapshot.resultPayload);
+        setRunAvailability("available");
         setPageError(null);
       } catch (error) {
         if (active) {
-          setPageError(getErrorMessage(error));
+          if (isRunUnavailableError(error)) {
+            markRunUnavailable(error);
+          } else {
+            setPageError(getErrorMessage(error));
+          }
         }
       } finally {
         if (active) {
@@ -254,37 +298,38 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   }, [runId]);
 
   useEffect(() => {
-    if (status && isTerminalStatus(status.status)) {
-      setConnectionState("complete");
+    if (runAvailability === "unavailable" || connectionState !== "reconnecting") {
       return;
     }
 
-    const timer = window.setInterval(() => {
+    const retryTimer = window.setTimeout(() => {
       void loadRunSnapshot(runId)
         .then((snapshot) => {
           setStatus((current) => mergeRunStatus(current, snapshot.status));
           setArtifacts(snapshot.artifacts);
           setScreenshotPath((current) => snapshot.screenshotPath ?? current);
           setResultPayload(snapshot.resultPayload);
+          setRunAvailability("available");
           setPageError(null);
         })
         .catch((error) => {
+          if (isRunUnavailableError(error)) {
+            markRunUnavailable(error);
+            return;
+          }
+
           setPageError(getErrorMessage(error));
         });
-    }, 4000);
+    }, 500);
 
-    return () => window.clearInterval(timer);
-  }, [runId, status]);
+    return () => window.clearTimeout(retryTimer);
+  }, [connectionState, markRunUnavailable, runAvailability, runId]);
 
   useEffect(() => {
-    if (!status) {
+    if (runAvailability === "unavailable") {
       return;
     }
 
-    setNewRunModel((current) => current || status.model);
-  }, [status]);
-
-  useEffect(() => {
     async function handleVisibilityChange() {
       if (document.visibilityState !== "visible") {
         return;
@@ -296,16 +341,27 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
         setArtifacts(snapshot.artifacts);
         setScreenshotPath((current) => snapshot.screenshotPath ?? current);
         setResultPayload(snapshot.resultPayload);
+        setRunAvailability("available");
+        setPageError(null);
       } catch (error) {
+        if (isRunUnavailableError(error)) {
+          markRunUnavailable(error);
+          return;
+        }
+
         setPageError(getErrorMessage(error));
       }
     }
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [runId]);
+  }, [markRunUnavailable, runAvailability, runId]);
 
   useEffect(() => {
+    if (runAvailability === "unavailable") {
+      return;
+    }
+
     const stream = new EventSource(runEventsUrl(runId));
     setConnectionState("connecting");
 
@@ -386,14 +442,17 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 
         if (payload.type === "result") {
           setConnectionState("complete");
-          void loadRunSnapshot(runId)
-            .then((snapshot) => {
-              setStatus((current) => mergeRunStatus(current, snapshot.status));
-              setArtifacts(snapshot.artifacts);
-              setScreenshotPath((current) => snapshot.screenshotPath ?? current);
-              setResultPayload(snapshot.resultPayload);
-            })
-            .catch((error) => setPageError(getErrorMessage(error)));
+          const hasResultArtifact = artifactsRef.current.some((artifact) => artifact.path === "result.json");
+          if (!hasResultArtifact || resultPayloadRef.current === null) {
+            void loadRunSnapshot(runId)
+              .then((snapshot) => {
+                setStatus((current) => mergeRunStatus(current, snapshot.status));
+                setArtifacts(snapshot.artifacts);
+                setScreenshotPath((current) => snapshot.screenshotPath ?? current);
+                setResultPayload(snapshot.resultPayload);
+              })
+              .catch((error) => setPageError(getErrorMessage(error)));
+          }
         }
       };
 
@@ -411,7 +470,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
       }
       stream.close();
     };
-  }, [runId]);
+  }, [runAvailability, runId]);
 
   async function handleApproval(decision: "approve" | "reject") {
     const pendingApproval = status?.pending_approval;
@@ -441,31 +500,6 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
     } finally {
       setStopBusy(false);
     }
-  }
-
-  async function handleCreateRun(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setNewRunSubmitting(true);
-    setNewRunError(null);
-
-    try {
-      const created = await createRun({
-        task: newRunTask,
-        model: newRunModel.trim() || null,
-      });
-      startTransition(() => {
-        navigate(`/runs/${created.run_id}`);
-      });
-    } catch (error) {
-      setNewRunError(getErrorMessage(error));
-    } finally {
-      setNewRunSubmitting(false);
-    }
-  }
-
-  function handleStartAnotherRun() {
-    launcherAnchorRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
-    launcherTaskRef.current?.focus();
   }
 
   if (loading) {
@@ -529,6 +563,22 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
         }
         leftRail={
           <>
+            {pageError ? (
+              <section
+                role="alert"
+                className="rounded-xl border border-destructive/35 bg-destructive/10 px-4 py-3 text-[#ffd1d1]"
+              >
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-mono text-[0.64rem] font-medium uppercase tracking-[0.2em]">
+                      Refresh issue
+                    </p>
+                    <p className="text-sm leading-6">{pageError}</p>
+                  </div>
+                </div>
+              </section>
+            ) : null}
             <RunSummaryCard
               status={status}
               connectionState={connectionState}
@@ -536,25 +586,6 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
               stopBusy={stopBusy}
               navigate={navigate}
             />
-            <div id="next-run-launcher" ref={launcherAnchorRef} className="scroll-mt-6">
-              <LauncherCard
-                task={newRunTask}
-                setTask={setNewRunTask}
-                model={newRunModel}
-                setModel={setNewRunModel}
-                submitting={newRunSubmitting}
-                submitError={newRunError}
-                onSubmit={handleCreateRun}
-                eyebrow="Next run"
-                title={isTerminalStatus(status.status) ? "Start another run" : "Queue another task"}
-                helperText={
-                  isTerminalStatus(status.status)
-                    ? "This run is finished. Start the next task here without losing the current result."
-                    : "Want to start another task? Queue it here without leaving the current run page."
-                }
-                taskInputRef={launcherTaskRef}
-              />
-            </div>
           </>
         }
         centerStage={
@@ -580,7 +611,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
         status={status}
         stopBusy={stopBusy}
         onStop={!isTerminalStatus(status.status) ? () => void handleStop() : undefined}
-        onStartAnotherRun={handleStartAnotherRun}
+        onStartAnotherRun={() => navigate("/")}
       />
       <ApprovalModal
         pendingApproval={status.pending_approval}

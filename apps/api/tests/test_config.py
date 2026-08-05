@@ -40,3 +40,29 @@ def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(_env_file=None)
 
     assert settings.headless is True
+
+
+def test_speed_defaults_enable_timings_and_sparse_screenshots(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.enable_step_timings is True
+    assert settings.step_screenshot_interval == 3
+    assert settings.include_step_browser_state is False
+    assert settings.approval_mode == "speed"
+
+
+def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_STEP_TIMINGS", "false")
+    monkeypatch.setenv("STEP_SCREENSHOT_INTERVAL", "0")
+    monkeypatch.setenv("INCLUDE_STEP_BROWSER_STATE", "true")
+    monkeypatch.setenv("APPROVAL_MODE", "strict")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.enable_step_timings is False
+    assert settings.step_screenshot_interval == 0
+    assert settings.include_step_browser_state is True
+    assert settings.approval_mode == "strict"
