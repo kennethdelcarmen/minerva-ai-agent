@@ -66,3 +66,56 @@ def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch
     assert settings.step_screenshot_interval == 0
     assert settings.include_step_browser_state is True
     assert settings.approval_mode == "strict"
+
+
+def test_settings_accept_browser_launch_args_json(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--foo=bar","--disable-dev-shm-usage"]')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.browser_launch_args == ["--foo=bar", "--disable-dev-shm-usage"]
+
+
+def test_settings_reject_non_array_browser_launch_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '{"flag":"--foo"}')
+
+    with pytest.raises(ValidationError):
+        Settings(_env_file=None)
+
+
+def test_container_mode_defaults_disable_sandbox_and_add_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.resolved_browser_chromium_sandbox is False
+    assert settings.resolved_browser_launch_args == ["--disable-dev-shm-usage", "--no-sandbox"]
+
+
+def test_local_mode_defaults_keep_sandbox_and_skip_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("BROWSER_CONTAINER_MODE", raising=False)
+    monkeypatch.delenv("BROWSER_CHROMIUM_SANDBOX", raising=False)
+    monkeypatch.delenv("BROWSER_LAUNCH_ARGS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.resolved_browser_chromium_sandbox is True
+    assert settings.resolved_browser_launch_args == []
+
+
+def test_user_browser_launch_args_override_default_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
+    monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--no-sandbox=false","--disable-dev-shm-usage=false","--foo=bar"]')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.resolved_browser_launch_args == [
+        "--no-sandbox=false",
+        "--disable-dev-shm-usage=false",
+        "--foo=bar",
+    ]

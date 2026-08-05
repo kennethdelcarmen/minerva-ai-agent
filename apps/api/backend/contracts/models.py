@@ -104,6 +104,25 @@ class RunArtifactsResponse(BaseModel):
     artifacts: list[ArtifactDescriptor]
 
 
+class BrowserReadinessState(str, Enum):
+    PASSED = "passed"
+    FAILED = "failed"
+    SKIPPED = "skipped"
+
+
+class BrowserRuntimeReadiness(BaseModel):
+    preflight: BrowserReadinessState
+    container_mode: bool
+    chromium_sandbox: bool
+    launch_args: list[str]
+    last_error: str | None = None
+
+
+class BrowserReadinessResponse(BaseModel):
+    status: Literal["ok", "failed"]
+    browser: BrowserRuntimeReadiness
+
+
 class BrowserActionEnvelope(BaseModel):
     action_name: str
     params: dict[str, Any]

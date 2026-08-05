@@ -4,12 +4,18 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 
 from backend.agent.service import RunService
 from backend.api.dependencies import get_run_service
-from backend.contracts.models import ApprovalDecisionRequest, CreateRunRequest, RunArtifactsResponse, RunStatusResponse
+from backend.contracts.models import (
+    ApprovalDecisionRequest,
+    BrowserReadinessResponse,
+    CreateRunRequest,
+    RunArtifactsResponse,
+    RunStatusResponse,
+)
 
 router = APIRouter()
 
@@ -17,6 +23,14 @@ router = APIRouter()
 @router.get("/healthz")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/readyz", response_model=BrowserReadinessResponse)
+async def readiness(request: Request) -> BrowserReadinessResponse:
+    readiness_state: BrowserReadinessResponse = request.app.state.browser_readiness
+    if readiness_state.status == "failed":
+        return JSONResponse(status_code=503, content=readiness_state.model_dump(mode="json"))
+    return readiness_state
 
 
 @router.post("/runs", response_model=RunStatusResponse, status_code=201)

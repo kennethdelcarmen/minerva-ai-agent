@@ -12,13 +12,21 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.agent.service import ManagedRunContext, RunService
+from backend.api import app as app_module
 
 os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
 os.environ.setdefault("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
 
 from backend.api.app import create_app
 from backend.config import Settings
-from backend.contracts.models import CreateRunRequest, EventType, RunEvent
+from backend.contracts.models import (
+    BrowserReadinessResponse,
+    BrowserReadinessState,
+    BrowserRuntimeReadiness,
+    CreateRunRequest,
+    EventType,
+    RunEvent,
+)
 
 
 class FakeRunner:
@@ -66,9 +74,13 @@ def settings(tmp_path: Path) -> Settings:
 
 
 @contextmanager
-def create_test_client(settings: Settings, runner: FakeRunner):
+def create_test_client(
+    settings: Settings,
+    runner: FakeRunner,
+    browser_readiness: BrowserReadinessResponse | None = None,
+):
     service = RunService(settings, runner)
-    app = create_app(settings=settings, run_service=service)
+    app = create_app(settings=settings, run_service=service, browser_readiness=browser_readiness)
     with TestClient(app) as client:
         yield client
 
@@ -90,6 +102,75 @@ def test_healthcheck(settings: Settings) -> None:
         response = client.get("/healthz")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+def test_readyz_defaults_to_skipped_with_injected_service(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "browser": {
+            "preflight": "skipped",
+            "container_mode": False,
+            "chromium_sandbox": True,
+            "launch_args": [],
+            "last_error": None,
+        },
+    }
+
+
+def test_readyz_returns_cached_failure_payload(settings: Settings) -> None:
+    runner = FakeRunner()
+    readiness = BrowserReadinessResponse(
+        status="failed",
+        browser=BrowserRuntimeReadiness(
+            preflight=BrowserReadinessState.FAILED,
+            container_mode=True,
+            chromium_sandbox=False,
+            launch_args=["--disable-dev-shm-usage", "--no-sandbox"],
+            last_error="cdp failed",
+        ),
+    )
+    with create_test_client(settings, runner, browser_readiness=readiness) as client:
+        response = client.get("/readyz")
+
+    assert response.status_code == 503
+    assert response.json() == readiness.model_dump(mode="json")
+
+
+def test_readyz_reports_passed_preflight_from_lifespan(monkeypatch: pytest.MonkeyPatch, settings: Settings) -> None:
+    preflight_settings = settings.model_copy(
+        update={
+            "browser_preflight_on_startup": True,
+            "browser_container_mode": True,
+        }
+    )
+    preflight_called = {"value": False}
+
+    async def fake_run_preflight(self) -> None:
+        preflight_called["value"] = True
+
+    monkeypatch.setattr(app_module, "get_settings", lambda: preflight_settings)
+    monkeypatch.setattr(app_module.BrowserUseRunner, "run_preflight", fake_run_preflight)
+
+    with TestClient(app_module.create_app()) as client:
+        response = client.get("/readyz")
+
+    assert preflight_called["value"] is True
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "browser": {
+            "preflight": "passed",
+            "container_mode": True,
+            "chromium_sandbox": False,
+            "launch_args": ["--disable-dev-shm-usage", "--no-sandbox"],
+            "last_error": None,
+        },
+    }
 
 
 def test_create_run_and_status(settings: Settings) -> None:

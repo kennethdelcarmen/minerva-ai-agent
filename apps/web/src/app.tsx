@@ -226,6 +226,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   const [approvalNote, setApprovalNote] = useState("");
   const [approvalBusy, setApprovalBusy] = useState(false);
   const [stopBusy, setStopBusy] = useState(false);
+  const [retryBusy, setRetryBusy] = useState(false);
   const artifactsRef = useRef<ArtifactDescriptor[]>([]);
   const resultPayloadRef = useRef<ResultArtifactPayload | null>(null);
 
@@ -502,6 +503,30 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
     }
   }
 
+  async function handleRetry() {
+    if (status?.status !== "failed") {
+      return;
+    }
+
+    setRetryBusy(true);
+    setPageError(null);
+
+    try {
+      const created = await createRun({
+        task: status.task,
+        model: status.model,
+      });
+
+      startTransition(() => {
+        navigate(`/runs/${created.run_id}`);
+      });
+    } catch (error) {
+      setPageError(getErrorMessage(error));
+    } finally {
+      setRetryBusy(false);
+    }
+  }
+
   if (loading) {
     return (
       <ScreenPanel
@@ -610,7 +635,9 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
       <RunCommandBar
         status={status}
         stopBusy={stopBusy}
+        retryBusy={retryBusy}
         onStop={!isTerminalStatus(status.status) ? () => void handleStop() : undefined}
+        onRetry={status.status === "failed" ? () => void handleRetry() : undefined}
         onStartAnotherRun={() => navigate("/")}
       />
       <ApprovalModal

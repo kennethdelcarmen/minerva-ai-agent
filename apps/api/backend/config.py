@@ -6,6 +6,7 @@ import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Annotated
+from typing import Any
 from typing import Literal
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator
@@ -41,6 +42,11 @@ class Settings(BaseSettings):
     step_screenshot_interval: int = Field(default=3, alias="STEP_SCREENSHOT_INTERVAL", ge=0)
     include_step_browser_state: bool = Field(default=False, alias="INCLUDE_STEP_BROWSER_STATE")
     approval_mode: Literal["strict", "speed"] = Field(default="speed", alias="APPROVAL_MODE")
+    browser_container_mode: bool = Field(default=False, alias="BROWSER_CONTAINER_MODE")
+    browser_preflight_on_startup: bool = Field(default=False, alias="BROWSER_PREFLIGHT_ON_STARTUP")
+    browser_launch_args: Annotated[list[str], NoDecode] = Field(default_factory=list, alias="BROWSER_LAUNCH_ARGS")
+    browser_chromium_sandbox: bool | None = Field(default=None, alias="BROWSER_CHROMIUM_SANDBOX")
+    browser_startup_retry_count: int = Field(default=1, alias="BROWSER_STARTUP_RETRY_COUNT", ge=0)
     cors_allow_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="CORS_ALLOW_ORIGINS",
@@ -63,6 +69,60 @@ class Settings(BaseSettings):
             return decoded
 
         return [origin.strip() for origin in stripped.split(",") if origin.strip()]
+
+    @field_validator("browser_launch_args", mode="before")
+    @classmethod
+    def parse_browser_launch_args(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        stripped = value.strip()
+        if not stripped:
+            return []
+
+        decoded = json.loads(stripped)
+        if not isinstance(decoded, list) or any(not isinstance(item, str) for item in decoded):
+            raise ValueError("BROWSER_LAUNCH_ARGS must be a JSON array of strings.")
+        return decoded
+
+    @property
+    def resolved_browser_chromium_sandbox(self) -> bool:
+        if self.browser_chromium_sandbox is not None:
+            return self.browser_chromium_sandbox
+
+        return not self.browser_container_mode
+
+    @property
+    def resolved_browser_launch_args(self) -> list[str]:
+        default_args: list[str] = []
+        if self.browser_container_mode:
+            default_args.append("--disable-dev-shm-usage")
+        if not self.resolved_browser_chromium_sandbox:
+            default_args.append("--no-sandbox")
+
+        return _merge_browser_launch_args(default_args, self.browser_launch_args)
+
+
+def _browser_arg_key(arg: str) -> str:
+    stripped = arg.strip()
+    if not stripped.startswith("-"):
+        return stripped
+
+    normalized = stripped.lstrip("-")
+    key, _, _ = normalized.partition("=")
+    return key
+
+
+def _merge_browser_launch_args(default_args: list[str], user_args: list[str]) -> list[str]:
+    merged: dict[str, str] = {}
+
+    for arg in [*default_args, *user_args]:
+        key = _browser_arg_key(arg)
+        if key in merged:
+            merged.pop(key)
+        merged[key] = arg
+
+    return list(merged.values())
 
 
 @lru_cache

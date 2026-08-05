@@ -36,9 +36,13 @@ class FakeHistory:
 
 
 class FakeBrowserSession:
+    instances: list["FakeBrowserSession"] = []
+
     def __init__(self, **kwargs):
         self.kwargs = kwargs
         self.browser_state_reads = 0
+        self.closed = False
+        self.__class__.instances.append(self)
 
     async def take_screenshot(self, path: str) -> None:
         screenshot_path = Path(path)
@@ -48,6 +52,9 @@ class FakeBrowserSession:
     async def get_browser_state_summary(self) -> SimpleNamespace:
         self.browser_state_reads += 1
         return SimpleNamespace(url="https://example.com/docs", title="Docs")
+
+    async def close(self) -> None:
+        self.closed = True
 
 
 class FakeAgent:
@@ -121,6 +128,7 @@ def base_settings(tmp_path: Path) -> Settings:
 
 
 def patch_runner_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
+    FakeBrowserSession.instances = []
     monkeypatch.setattr(runner_module, "Agent", FakeAgent)
     monkeypatch.setattr(runner_module, "BrowserSession", FakeBrowserSession)
     monkeypatch.setattr(runner_module, "ChatOpenRouter", lambda **kwargs: SimpleNamespace(**kwargs))
@@ -175,3 +183,84 @@ async def test_runner_emits_screenshot_and_browser_state_when_enabled(
     assert result["timings"]["screenshots_captured"] == 1
     assert result["timings"]["browser_state_reads"] == 1
     assert result["timings"]["run_duration_ms"] >= 0
+
+
+@pytest.mark.asyncio
+async def test_runner_passes_resolved_browser_launch_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    settings = base_settings.model_copy(
+        update={
+            "browser_container_mode": True,
+            "browser_launch_args": ["--no-sandbox=false", "--disable-dev-shm-usage=false", "--foo=bar"],
+        }
+    )
+    runner = BrowserUseRunner(settings)
+
+    await runner.run(FakeContext(tmp_path / "run-launch-config"))
+
+    session = FakeBrowserSession.instances[0]
+    assert session.kwargs["chromium_sandbox"] is False
+    assert session.kwargs["args"] == ["--no-sandbox=false", "--disable-dev-shm-usage=false", "--foo=bar"]
+
+
+class FlakyStartupAgent(FakeAgent):
+    run_attempts = 0
+
+    async def run(self, *, max_steps: int, on_step_end):
+        self.__class__.run_attempts += 1
+        if self.__class__.run_attempts == 1:
+            raise RuntimeError(
+                "Failed to establish CDP connection to browser: "
+                "Failed to get session for initial target 123: "
+                "Target 123 not found - may have detached or never existed"
+            )
+        return await super().run(max_steps=max_steps, on_step_end=on_step_end)
+
+
+class ExplodingAgent(FakeAgent):
+    run_attempts = 0
+
+    async def run(self, *, max_steps: int, on_step_end):
+        self.__class__.run_attempts += 1
+        raise RuntimeError("boom")
+
+
+@pytest.mark.asyncio
+async def test_runner_retries_matching_startup_error_once(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    FlakyStartupAgent.run_attempts = 0
+    monkeypatch.setattr(runner_module, "Agent", FlakyStartupAgent)
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-startup-retry")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert FlakyStartupAgent.run_attempts == 2
+    retry_event = next(event for event in context.events if event["summary"] == "Transient browser startup failure detected. Retrying.")
+    assert "ipc: host" in retry_event["data"]["hints"]
+
+
+@pytest.mark.asyncio
+async def test_runner_does_not_retry_non_matching_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    ExplodingAgent.run_attempts = 0
+    monkeypatch.setattr(runner_module, "Agent", ExplodingAgent)
+    runner = BrowserUseRunner(base_settings)
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await runner.run(FakeContext(tmp_path / "run-no-retry"))
+
+    assert ExplodingAgent.run_attempts == 1

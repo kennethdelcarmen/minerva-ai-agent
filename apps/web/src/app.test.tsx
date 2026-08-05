@@ -686,6 +686,71 @@ describe("operator console", () => {
     ).not.toBeNull();
   });
 
+  it("retries a failed run from the sticky command bar", async () => {
+    let retryRequest: Record<string, unknown> | null = null;
+
+    installFetchMock((input, init) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(
+          createStatus({
+            status: "failed",
+            task: "Open example.com and summarize the page",
+            model: "gpt-5",
+            current_step_summary: "Navigation failed on the destination site.",
+            completed_at: "2026-08-03T10:02:00Z",
+            last_error: "Navigation timeout",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        retryRequest = JSON.parse(String(init.body));
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            task: "Open example.com and summarize the page",
+            model: "gpt-5",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-456")) {
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            task: "Open example.com and summarize the page",
+            model: "gpt-5",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-456/artifacts")) {
+        return jsonResponse({ run_id: "run-456", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    await userEvent.click(within(commandBar).getByRole("button", { name: "Retry run" }));
+
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+    expect(retryRequest).toEqual({
+      task: "Open example.com and summarize the page",
+      model: "gpt-5",
+    });
+    expect(window.location.pathname).toBe("/runs/run-456");
+  });
+
   it("switches the sticky command bar to start another run and routes back to the launcher", async () => {
     installFetchMock((input) => {
       const url = input.toString();

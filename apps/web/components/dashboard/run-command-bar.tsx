@@ -1,4 +1,4 @@
-import { Clock3, Square, Sparkles } from "lucide-react";
+import { Clock3, RotateCcw, Square, Sparkles } from "lucide-react";
 
 import { ActivityIndicator, StatusBadge } from "@/components/dashboard/dashboard-primitives";
 import { Button } from "@/components/ui/button";
@@ -63,12 +63,16 @@ function summaryCopy(status: RunStatusResponse): { title: string; summary: strin
 export function RunCommandBar({
   status,
   stopBusy = false,
+  retryBusy = false,
   onStop,
+  onRetry,
   onStartAnotherRun,
 }: {
   status: RunStatusResponse;
   stopBusy?: boolean;
+  retryBusy?: boolean;
   onStop?: () => void;
+  onRetry?: () => void;
   onStartAnotherRun: () => void;
 }) {
   const tone = shellTone(status);
@@ -102,7 +106,18 @@ export function RunCommandBar({
             </div>
 
             <div className="flex shrink-0 items-center gap-3">
-              {terminal ? (
+              {terminal && status.status === "failed" && onRetry ? (
+                <Button
+                  type="button"
+                  size="lg"
+                  className="rounded-md px-5"
+                  onClick={onRetry}
+                  disabled={retryBusy}
+                >
+                  <RotateCcw className="size-4" />
+                  {retryBusy ? "Retrying..." : "Retry run"}
+                </Button>
+              ) : terminal ? (
                 <Button type="button" size="lg" className="rounded-md px-5" onClick={onStartAnotherRun}>
                   <Sparkles className="size-4" />
                   Start another run

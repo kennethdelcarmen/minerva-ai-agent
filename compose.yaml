@@ -2,11 +2,15 @@ services:
   api:
     build:
       context: ./apps/api
+    init: true
+    ipc: host
     env_file:
       - ./apps/api/.env
     environment:
       HEADLESS: "true"
       ARTIFACT_ROOT: /app/.runs
+      BROWSER_CONTAINER_MODE: "true"
+      BROWSER_PREFLIGHT_ON_STARTUP: "true"
     ports:
       - "8000:8000"
     volumes:

@@ -29,6 +29,8 @@ Create `apps/api/.env`:
 ```bash
 OPENROUTER_API_KEY=your-key
 OPENROUTER_MODEL=google/gemini-2.5-flash:free
+BROWSER_CONTAINER_MODE=false
+BROWSER_PREFLIGHT_ON_STARTUP=false
 ```
 
 Run the API:
@@ -62,8 +64,21 @@ docker compose up --build api
 Notes:
 
 - The container runs browser automation headlessly by default.
+- The checked-in `compose.yaml` enables `init: true`, `ipc: host`, `BROWSER_CONTAINER_MODE=true`, and `BROWSER_PREFLIGHT_ON_STARTUP=true` for the API service.
 - Run artifacts persist on the host at `apps/api/.runs`.
 - The API is exposed at `http://127.0.0.1:8000`.
+- Use `http://127.0.0.1:8000/healthz` for liveness and `http://127.0.0.1:8000/readyz` to confirm browser-runtime readiness before launching a run.
+
+## Docker Troubleshooting
+
+If Chromium fails during startup with CDP target/session errors:
+
+- Use the repo-managed startup command: `docker compose up --build api`.
+- Verify the API container is running with `ipc: host`.
+- Verify Chromium is getting `--disable-dev-shm-usage`.
+- Verify `--no-sandbox` is active when `BROWSER_CHROMIUM_SANDBOX=false` or container mode auto-disables sandboxing.
+- Restart the container or environment to clear stale browser processes.
+- Check `http://127.0.0.1:8000/readyz` before starting a run. A `503` response includes the cached browser startup error.
 
 ## Frontend Setup
 
