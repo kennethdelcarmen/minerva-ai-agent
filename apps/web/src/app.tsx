@@ -66,6 +66,23 @@ function mergeRunStatus(current: RunStatusResponse | null, next: RunStatusRespon
   return next;
 }
 
+function resolveApprovalDecisionStatus(
+  next: RunStatusResponse,
+  approvalId: string,
+  decision: "approve" | "reject",
+): RunStatusResponse {
+  if (next.pending_approval?.id !== approvalId) {
+    return next;
+  }
+
+  return {
+    ...next,
+    status: decision === "approve" ? "running" : "failed",
+    pending_approval: null,
+    pending_approval_id: null,
+  };
+}
+
 function latestScreenshotPath(artifacts: ArtifactDescriptor[]): string | null {
   for (let index = artifacts.length - 1; index >= 0; index -= 1) {
     if (artifacts[index].kind === "screenshot") {
@@ -337,6 +354,15 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
               : null;
           }
 
+          if (payload.type === "observation") {
+            const approvalId = typeof payload.data.approval_id === "string" ? payload.data.approval_id : null;
+            if (approvalId && current.pending_approval?.id === approvalId) {
+              next.status = "running";
+              next.pending_approval = null;
+              next.pending_approval_id = null;
+            }
+          }
+
           if (payload.type === "result") {
             const resultStatus = payload.data.status;
             if (typeof resultStatus === "string") {
@@ -388,14 +414,15 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   }, [runId]);
 
   async function handleApproval(decision: "approve" | "reject") {
-    if (!status?.pending_approval) {
+    const pendingApproval = status?.pending_approval;
+    if (!pendingApproval) {
       return;
     }
 
     setApprovalBusy(true);
     try {
-      const nextStatus = await decideApproval(runId, status.pending_approval.id, decision, approvalNote);
-      setStatus(nextStatus);
+      const nextStatus = await decideApproval(runId, pendingApproval.id, decision, approvalNote);
+      setStatus(resolveApprovalDecisionStatus(nextStatus, pendingApproval.id, decision));
       setApprovalNote("");
     } catch (error) {
       setPageError(getErrorMessage(error));

@@ -150,6 +150,9 @@ def test_approval_blocks_until_decision(settings: Settings) -> None:
             json={"decision": "approve", "note": "Proceed"},
         )
         assert response.status_code == 200
+        assert response.json()["status"] == "running"
+        assert response.json()["pending_approval_id"] is None
+        assert response.json()["pending_approval"] is None
 
         wait_for_status(client, run_id, "succeeded")
 
@@ -167,6 +170,9 @@ def test_approval_rejection_is_terminal(settings: Settings) -> None:
             json={"decision": "reject", "note": "Stop"},
         )
         assert response.status_code == 200
+        assert response.json()["status"] == "failed"
+        assert response.json()["pending_approval_id"] is None
+        assert response.json()["pending_approval"] is None
 
         wait_for_status(client, run_id, "failed")
 

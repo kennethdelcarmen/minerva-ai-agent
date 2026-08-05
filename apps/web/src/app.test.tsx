@@ -244,22 +244,23 @@ describe("operator console", () => {
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).not.toBeNull();
   });
 
-  it("opens a blocking approval modal when approval is already pending", async () => {
+  it("closes the approval modal after one approve click even if the backend returns stale approval state", async () => {
     installFetchMock((input, init) => {
       const url = input.toString();
+      const pendingApproval = {
+        id: "approval-1",
+        action_name: "click",
+        params: { index: 1 },
+        reason: "Click requires approval.",
+        requested_at: "2026-08-03T10:00:05Z",
+      };
 
       if (url.endsWith("/runs/run-123") && !init?.method) {
         return jsonResponse(
           createStatus({
             status: "waiting_for_approval",
             pending_approval_id: "approval-1",
-            pending_approval: {
-              id: "approval-1",
-              action_name: "click",
-              params: { index: 1 },
-              reason: "Click requires approval.",
-              requested_at: "2026-08-03T10:00:05Z",
-            },
+            pending_approval: pendingApproval,
           }),
         );
       }
@@ -269,7 +270,13 @@ describe("operator console", () => {
       }
 
       if (url.endsWith("/runs/run-123/approvals/approval-1") && init?.method === "POST") {
-        return jsonResponse(createStatus());
+        return jsonResponse(
+          createStatus({
+            status: "waiting_for_approval",
+            pending_approval_id: "approval-1",
+            pending_approval: pendingApproval,
+          }),
+        );
       }
 
       throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
@@ -291,6 +298,22 @@ describe("operator console", () => {
         expect.objectContaining({ method: "POST" }),
       );
     });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog", { name: "Approval required" })).not.toBeInTheDocument();
+    });
+
+    expect(
+      (
+        fetch as unknown as {
+          mock: { calls: Array<[RequestInfo | URL, RequestInit | undefined]> };
+        }
+      ).mock.calls.filter(
+        ([request, init]) =>
+          request.toString() === "http://127.0.0.1:8000/runs/run-123/approvals/approval-1" &&
+          init?.method === "POST",
+      ),
+    ).toHaveLength(1);
   });
 
   it("opens the approval modal from a streamed approval event", async () => {
@@ -338,6 +361,80 @@ describe("operator console", () => {
     expect(within(commandBar).getByText('Approval required for "click".')).toBeInTheDocument();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).toBeNull();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="blocked"]')).not.toBeNull();
+
+    await act(async () => {
+      MockEventSource.instances[0].emit("observation", {
+        id: "event-approval-cleared",
+        run_id: "run-123",
+        sequence: 5,
+        type: "observation",
+        summary: 'Approval granted for "click".',
+        timestamp: "2026-08-03T10:00:04Z",
+        data: {
+          approval_id: "approval-2",
+          note: "Proceed",
+        },
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog", { name: "Approval required" })).not.toBeInTheDocument();
+    });
+
+    expect(within(commandBar).getByText("Run in progress")).toBeInTheDocument();
+    expect(within(commandBar).getByText('Approval granted for "click".')).toBeInTheDocument();
+    expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).not.toBeNull();
+  });
+
+  it("closes the approval modal immediately after a rejection response", async () => {
+    installFetchMock((input, init) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123") && !init?.method) {
+        return jsonResponse(
+          createStatus({
+            status: "waiting_for_approval",
+            pending_approval_id: "approval-1",
+            pending_approval: {
+              id: "approval-1",
+              action_name: "click",
+              params: { index: 1 },
+              reason: "Click requires approval.",
+              requested_at: "2026-08-03T10:00:05Z",
+            },
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      if (url.endsWith("/runs/run-123/approvals/approval-1") && init?.method === "POST") {
+        return jsonResponse(
+          createStatus({
+            status: "failed",
+            pending_approval_id: null,
+            pending_approval: null,
+            last_error: 'Operator rejected "click".',
+          }),
+        );
+      }
+
+      throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
+    await userEvent.click(within(dialog).getByRole("button", { name: "Reject" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("alertdialog", { name: "Approval required" })).not.toBeInTheDocument();
+    });
+
+    expect(screen.getAllByText("Failed").length).toBeGreaterThan(0);
   });
 
   it("renders markdown in the terminal result modal and keeps artifact links available", async () => {

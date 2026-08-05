@@ -217,6 +217,13 @@ class RunService:
 
         approval.decision = decision
         approval.note = note
+        record.pending_approval = None
+        record.updated_at = utc_now()
+        if decision == ApprovalDecision.APPROVE:
+            record.status = RunStatus.RUNNING
+        else:
+            record.status = RunStatus.FAILED
+            record.last_error = f'Operator rejected "{approval.action_name}".'
         approval.event.set()
         return self._status_response(record)
 
@@ -298,7 +305,8 @@ class RunService:
         for task in pending:
             task.cancel()
 
-        record.pending_approval = None
+        if record.pending_approval is approval:
+            record.pending_approval = None
 
         if record.stop_event.is_set():
             raise ApprovalRejectedError("Run stopped while awaiting operator approval.")
