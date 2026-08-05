@@ -259,12 +259,6 @@ describe("operator console", () => {
     window.history.pushState({}, "", "/runs/run-123");
     render(<App />);
 
-    expect(
-      await screen.findByText(
-        "Minerva is blocked on your review. Approve or reject the pending action to continue the run.",
-      ),
-    ).toBeInTheDocument();
-
     const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
     expect(within(dialog).getByText("Click requires approval.")).toBeInTheDocument();
     expect(document.body.style.overflow).toBe("hidden");

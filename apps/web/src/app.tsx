@@ -39,9 +39,31 @@ import type {
 import { Button } from "@/components/ui/button";
 
 const EVENT_TYPES: EventType[] = ["plan", "action", "observation", "approval", "error", "result"];
+const GENERIC_FAILURE_MESSAGES = new Set(["failed", "run failed"]);
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Unexpected error";
+}
+
+function normalizeMessage(message: string | null | undefined): string | null {
+  const normalized = message?.trim().toLowerCase();
+  return normalized ? normalized : null;
+}
+
+function mergeRunStatus(current: RunStatusResponse | null, next: RunStatusResponse): RunStatusResponse {
+  if (!current?.last_error || next.status !== "failed") {
+    return next;
+  }
+
+  const nextError = normalizeMessage(next.last_error);
+  if (nextError === null || GENERIC_FAILURE_MESSAGES.has(nextError)) {
+    return {
+      ...next,
+      last_error: current.last_error,
+    };
+  }
+
+  return next;
 }
 
 function latestScreenshotPath(artifacts: ArtifactDescriptor[]): string | null {
@@ -197,7 +219,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
           return;
         }
 
-        setStatus(snapshot.status);
+        setStatus((current) => mergeRunStatus(current, snapshot.status));
         setArtifacts(snapshot.artifacts);
         setScreenshotPath(snapshot.screenshotPath);
         setResultPayload(snapshot.resultPayload);
@@ -228,7 +250,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
     const timer = window.setInterval(() => {
       void loadRunSnapshot(runId)
         .then((snapshot) => {
-          setStatus(snapshot.status);
+          setStatus((current) => mergeRunStatus(current, snapshot.status));
           setArtifacts(snapshot.artifacts);
           setScreenshotPath((current) => snapshot.screenshotPath ?? current);
           setResultPayload(snapshot.resultPayload);
@@ -258,7 +280,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 
       try {
         const snapshot = await loadRunSnapshot(runId);
-        setStatus(snapshot.status);
+        setStatus((current) => mergeRunStatus(current, snapshot.status));
         setArtifacts(snapshot.artifacts);
         setScreenshotPath((current) => snapshot.screenshotPath ?? current);
         setResultPayload(snapshot.resultPayload);
@@ -345,7 +367,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
           setConnectionState("complete");
           void loadRunSnapshot(runId)
             .then((snapshot) => {
-              setStatus(snapshot.status);
+              setStatus((current) => mergeRunStatus(current, snapshot.status));
               setArtifacts(snapshot.artifacts);
               setScreenshotPath((current) => snapshot.screenshotPath ?? current);
               setResultPayload(snapshot.resultPayload);

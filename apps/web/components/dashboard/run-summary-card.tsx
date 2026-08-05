@@ -7,7 +7,6 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   connectionLabel,
-  connectionTone,
   formatTimestamp,
   isTerminalStatus,
   runIndicatorState,
@@ -91,7 +90,7 @@ export function RunSummaryCard({
         : status.status === "succeeded"
           ? "Run finished successfully. Review the outcome or start another task."
           : status.status === "failed"
-            ? "Run ended with a failure. Review the last error before starting again."
+            ? "Run ended with a failure. Review the run history before starting again."
             : "Run was stopped. You can review the progress so far or launch another task.";
   const stateStripClasses =
     indicatorState === "running"
@@ -114,7 +113,7 @@ export function RunSummaryCard({
               <h2>What Minerva is doing</h2>
             </CardTitle>
             <CardDescription className="leading-6">
-              Review the live step, operator alerts, and run details from one place.
+              Review the live step and run details from one place.
             </CardDescription>
           </div>
           <StatusBadge tone={statusTone(status.status)}>{statusLabel(status.status)}</StatusBadge>
@@ -134,20 +133,6 @@ export function RunSummaryCard({
             {status.current_step_summary ?? "Waiting for the next step."}
           </p>
         </section>
-
-        <div className="space-y-3" aria-label="Run alerts">
-          {status.pending_approval ? (
-            <div className="rounded-xl border border-[#f2a65a]/35 bg-[#f2a65a]/10 px-4 py-3 text-sm leading-6 text-[#ffe3c1]">
-              Minerva is blocked on your review. Approve or reject the pending action to continue the run.
-            </div>
-          ) : null}
-
-          {status.last_error ? (
-            <div className="rounded-xl border border-destructive/35 bg-destructive/10 px-4 py-3 text-sm leading-6 text-[#ffd1d1]">
-              {status.last_error}
-            </div>
-          ) : null}
-        </div>
 
         <section className="space-y-3">
           <div className="flex items-center justify-between gap-3">
