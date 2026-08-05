@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import json
 from functools import lru_cache
 from pathlib import Path
+from typing import Annotated
 
-from pydantic import AliasChoices, Field, SecretStr
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 
@@ -33,10 +35,28 @@ class Settings(BaseSettings):
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     max_steps: int = Field(default=25, alias="MAX_STEPS")
-    cors_allow_origins: list[str] = Field(
+    cors_allow_origins: Annotated[list[str], NoDecode] = Field(
         default_factory=lambda: ["http://localhost:5173", "http://127.0.0.1:5173"],
         alias="CORS_ALLOW_ORIGINS",
     )
+
+    @field_validator("cors_allow_origins", mode="before")
+    @classmethod
+    def parse_cors_allow_origins(cls, value: object) -> object:
+        if not isinstance(value, str):
+            return value
+
+        stripped = value.strip()
+        if not stripped:
+            return []
+
+        if stripped.startswith("["):
+            decoded = json.loads(stripped)
+            if not isinstance(decoded, list) or any(not isinstance(item, str) for item in decoded):
+                raise ValueError("CORS_ALLOW_ORIGINS must be a JSON array of strings.")
+            return decoded
+
+        return [origin.strip() for origin in stripped.split(",") if origin.strip()]
 
 
 @lru_cache

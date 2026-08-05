@@ -13,3 +13,21 @@ def test_settings_require_openrouter_api_key(monkeypatch: pytest.MonkeyPatch) ->
 
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_settings_accept_json_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", '["https://app.example.com","https://admin.example.com"]')
+
+    settings = Settings(_env_file=None)
+
+    assert settings.cors_allow_origins == ["https://app.example.com", "https://admin.example.com"]
+
+
+def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://app.example.com, https://admin.example.com")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.cors_allow_origins == ["https://app.example.com", "https://admin.example.com"]
