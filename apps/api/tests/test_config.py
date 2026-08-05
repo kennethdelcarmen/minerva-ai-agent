@@ -31,3 +31,12 @@ def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> No
     settings = Settings(_env_file=None)
 
     assert settings.cors_allow_origins == ["https://app.example.com", "https://admin.example.com"]
+
+
+def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.delenv("HEADLESS", raising=False)
+
+    settings = Settings(_env_file=None)
+
+    assert settings.headless is True

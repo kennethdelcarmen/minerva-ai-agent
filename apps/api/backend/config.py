@@ -31,7 +31,7 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OPENROUTER_MODEL"),
         serialization_alias="OPENROUTER_MODEL",
     )
-    headless: bool = Field(default=False, alias="HEADLESS")
+    headless: bool = Field(default=True, alias="HEADLESS")
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
     max_steps: int = Field(default=25, alias="MAX_STEPS")

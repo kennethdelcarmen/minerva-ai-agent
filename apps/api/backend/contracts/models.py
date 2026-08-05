@@ -43,7 +43,6 @@ class ApprovalDecision(str, Enum):
 class CreateRunRequest(BaseModel):
     task: str = Field(min_length=1, description="Natural-language browser task.")
     model: str | None = Field(default=None, description="Optional OpenRouter model override.")
-    headless: bool | None = Field(default=None, description="Optional browser headless override.")
 
 
 class ApprovalDecisionRequest(BaseModel):

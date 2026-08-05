@@ -106,6 +106,15 @@ def test_create_run_and_status(settings: Settings) -> None:
         status = client.get(f"/runs/{run_id}")
         assert status.status_code == 200
         assert status.json()["task"] == "Open example.com"
+        assert status.json()["headless"] is True
+
+
+def test_create_run_ignores_client_headless_override(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.post("/runs", json={"task": "Open example.com", "headless": False})
+        assert response.status_code == 201
+        assert response.json()["headless"] is True
 
 
 def test_sse_stream_emits_typed_events(settings: Settings) -> None:

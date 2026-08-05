@@ -17,7 +17,6 @@ export type EventType =
 export interface CreateRunRequest {
   task: string;
   model?: string | null;
-  headless?: boolean | null;
 }
 
 export interface PendingApprovalResponse {

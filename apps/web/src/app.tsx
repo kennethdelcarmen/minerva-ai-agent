@@ -119,7 +119,6 @@ function usePathname() {
 function HomePage({ navigate }: { navigate: (path: string) => void }) {
   const [task, setTask] = useState("");
   const [model, setModel] = useState("");
-  const [headless, setHeadless] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
 
@@ -132,7 +131,6 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
       const created = await createRun({
         task,
         model: model.trim() || null,
-        headless,
       });
       startTransition(() => {
         navigate(`/runs/${created.run_id}`);
@@ -161,8 +159,6 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
             setTask={setTask}
             model={model}
             setModel={setModel}
-            headless={headless}
-            setHeadless={setHeadless}
             submitting={isSubmitting}
             submitError={submitError}
             onSubmit={handleSubmit}
@@ -200,7 +196,6 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
   const [loading, setLoading] = useState(true);
   const [newRunTask, setNewRunTask] = useState("");
   const [newRunModel, setNewRunModel] = useState("");
-  const [newRunHeadless, setNewRunHeadless] = useState(false);
   const [newRunSubmitting, setNewRunSubmitting] = useState(false);
   const [newRunError, setNewRunError] = useState<string | null>(null);
   const [approvalNote, setApprovalNote] = useState("");
@@ -430,7 +425,6 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
       const created = await createRun({
         task: newRunTask,
         model: newRunModel.trim() || null,
-        headless: newRunHeadless,
       });
       startTransition(() => {
         navigate(`/runs/${created.run_id}`);
@@ -521,8 +515,6 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
                 setTask={setNewRunTask}
                 model={newRunModel}
                 setModel={setNewRunModel}
-                headless={newRunHeadless}
-                setHeadless={setNewRunHeadless}
                 submitting={newRunSubmitting}
                 submitError={newRunError}
                 onSubmit={handleCreateRun}

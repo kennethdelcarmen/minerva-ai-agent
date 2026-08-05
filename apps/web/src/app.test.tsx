@@ -118,6 +118,7 @@ describe("operator console", () => {
 
     expect(screen.getByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Start run" })).toBeInTheDocument();
+    expect(screen.queryByText("Headless mode")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "What Minerva sees" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Activity and answer" })).toBeInTheDocument();
     expect(screen.getByText("Status updates will appear here")).toBeInTheDocument();

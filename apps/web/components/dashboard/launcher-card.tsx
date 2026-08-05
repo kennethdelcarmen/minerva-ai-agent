@@ -8,7 +8,6 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 export function LauncherCard({
@@ -16,8 +15,6 @@ export function LauncherCard({
   setTask,
   model,
   setModel,
-  headless,
-  setHeadless,
   submitting,
   submitError,
   onSubmit,
@@ -30,8 +27,6 @@ export function LauncherCard({
   setTask: (value: string) => void;
   model: string;
   setModel: (value: string) => void;
-  headless: boolean;
-  setHeadless: (value: boolean) => void;
   submitting: boolean;
   submitError: string | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -42,7 +37,6 @@ export function LauncherCard({
 }) {
   const goalId = useId();
   const modelId = useId();
-  const headlessId = useId();
 
   return (
     <Card className="border-border bg-card">
@@ -90,7 +84,7 @@ export function LauncherCard({
             <summary className="cursor-pointer list-none text-sm font-medium text-foreground">
               Advanced settings
             </summary>
-            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_168px]">
+            <div className="mt-4 grid gap-4">
               <div className="space-y-2">
                 <Label htmlFor={modelId}>Model override</Label>
                 <Input
@@ -102,18 +96,6 @@ export function LauncherCard({
                   placeholder="gemini-3.6-flash"
                   className="h-11 rounded-lg px-3.5"
                 />
-              </div>
-
-              <div className="rounded-xl border border-border bg-card/70 p-4">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor={headlessId}>Headless mode</Label>
-                    <p className="text-sm leading-6 text-muted-foreground">
-                      Hide the visible browser window and rely on logs, screenshots, and the final answer.
-                    </p>
-                  </div>
-                  <Switch id={headlessId} checked={headless} onCheckedChange={setHeadless} />
-                </div>
               </div>
             </div>
           </details>
