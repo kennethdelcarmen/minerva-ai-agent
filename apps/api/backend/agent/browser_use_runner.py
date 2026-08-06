@@ -7,12 +7,12 @@ from time import perf_counter
 from typing import Any
 
 from browser_use import Agent, BrowserSession
-from browser_use.llm import ChatOpenRouter
 
 from backend.agent.policies import should_require_approval
 from backend.agent.service import ManagedRunContext
 from backend.config import Settings
 from backend.contracts.models import EventType
+from backend.llm import create_google_llm
 
 
 @dataclass(frozen=True)
@@ -136,10 +136,7 @@ class BrowserUseRunner:
 
         try:
             browser = self._build_browser_session(headless=context.headless, run_dir=context.run_dir)
-            llm = ChatOpenRouter(
-                model=context.model,
-                api_key=self.settings.openrouter_api_key.get_secret_value(),
-            )
+            llm = create_google_llm(model=context.model, settings=self.settings)
             agent = Agent(
                 task=context.request.task,
                 llm=llm,

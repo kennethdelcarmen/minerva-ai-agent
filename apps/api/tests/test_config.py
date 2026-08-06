@@ -8,15 +8,21 @@ from pydantic import ValidationError
 from backend.config import Settings
 
 
-def test_settings_require_openrouter_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+@pytest.fixture(autouse=True)
+def clear_google_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_MODEL", raising=False)
 
-    with pytest.raises(ValidationError):
+
+def test_settings_require_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+    with pytest.raises(ValidationError, match="GOOGLE_API_KEY environment variable is not set."):
         Settings(_env_file=None)
 
 
 def test_settings_accept_json_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", '["https://app.example.com","https://admin.example.com"]')
 
     settings = Settings(_env_file=None)
@@ -25,7 +31,7 @@ def test_settings_accept_json_cors_origins(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://app.example.com, https://admin.example.com")
 
     settings = Settings(_env_file=None)
@@ -34,7 +40,7 @@ def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.delenv("HEADLESS", raising=False)
 
     settings = Settings(_env_file=None)
@@ -43,18 +49,19 @@ def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_speed_defaults_enable_timings_and_sparse_screenshots(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
 
     settings = Settings(_env_file=None)
 
     assert settings.enable_step_timings is True
+    assert settings.google_model == "gemini-3.5-flash-lite"
     assert settings.step_screenshot_interval == 3
     assert settings.include_step_browser_state is False
     assert settings.approval_mode == "speed"
 
 
 def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("ENABLE_STEP_TIMINGS", "false")
     monkeypatch.setenv("STEP_SCREENSHOT_INTERVAL", "0")
     monkeypatch.setenv("INCLUDE_STEP_BROWSER_STATE", "true")
@@ -69,7 +76,7 @@ def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch
 
 
 def test_settings_accept_browser_launch_args_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--foo=bar","--disable-dev-shm-usage"]')
 
     settings = Settings(_env_file=None)
@@ -78,7 +85,7 @@ def test_settings_accept_browser_launch_args_json(monkeypatch: pytest.MonkeyPatc
 
 
 def test_settings_reject_non_array_browser_launch_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '{"flag":"--foo"}')
 
     with pytest.raises(ValidationError):
@@ -86,7 +93,7 @@ def test_settings_reject_non_array_browser_launch_args(monkeypatch: pytest.Monke
 
 
 def test_container_mode_defaults_disable_sandbox_and_add_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
 
     settings = Settings(_env_file=None)
@@ -96,7 +103,7 @@ def test_container_mode_defaults_disable_sandbox_and_add_container_args(monkeypa
 
 
 def test_local_mode_defaults_keep_sandbox_and_skip_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.delenv("BROWSER_CONTAINER_MODE", raising=False)
     monkeypatch.delenv("BROWSER_CHROMIUM_SANDBOX", raising=False)
     monkeypatch.delenv("BROWSER_LAUNCH_ARGS", raising=False)
@@ -108,7 +115,7 @@ def test_local_mode_defaults_keep_sandbox_and_skip_container_args(monkeypatch: p
 
 
 def test_user_browser_launch_args_override_default_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--no-sandbox=false","--disable-dev-shm-usage=false","--foo=bar"]')
 
@@ -119,3 +126,11 @@ def test_user_browser_launch_args_override_default_flags(monkeypatch: pytest.Mon
         "--disable-dev-shm-usage=false",
         "--foo=bar",
     ]
+
+
+def test_settings_reject_unsupported_google_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("GOOGLE_MODEL", "gpt-5")
+
+    with pytest.raises(ValidationError, match="GOOGLE_MODEL must be one of:"):
+        Settings(_env_file=None)

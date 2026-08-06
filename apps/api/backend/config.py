@@ -9,8 +9,10 @@ from typing import Annotated
 from typing import Any
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
+
+from backend.model_catalog import DEFAULT_GOOGLE_MODEL, SUPPORTED_GOOGLE_MODELS, is_supported_google_model
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 
@@ -22,16 +24,18 @@ class Settings(BaseSettings):
         env_file=APP_ROOT / ".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        validate_default=True,
     )
 
-    openrouter_api_key: SecretStr = Field(
-        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
-        serialization_alias="OPENROUTER_API_KEY",
+    google_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GOOGLE_API_KEY"),
+        serialization_alias="GOOGLE_API_KEY",
     )
-    openrouter_model: str = Field(
-        default="google/gemini-2.5-flash:free",
-        validation_alias=AliasChoices("OPENROUTER_MODEL"),
-        serialization_alias="OPENROUTER_MODEL",
+    google_model: str = Field(
+        default=DEFAULT_GOOGLE_MODEL,
+        validation_alias=AliasChoices("GOOGLE_MODEL"),
+        serialization_alias="GOOGLE_MODEL",
     )
     headless: bool = Field(default=True, alias="HEADLESS")
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
@@ -84,6 +88,20 @@ class Settings(BaseSettings):
         if not isinstance(decoded, list) or any(not isinstance(item, str) for item in decoded):
             raise ValueError("BROWSER_LAUNCH_ARGS must be a JSON array of strings.")
         return decoded
+
+    @field_validator("google_model")
+    @classmethod
+    def validate_google_model(cls, value: str) -> str:
+        if not is_supported_google_model(value):
+            supported_models = ", ".join(sorted(SUPPORTED_GOOGLE_MODELS))
+            raise ValueError(f"GOOGLE_MODEL must be one of: {supported_models}.")
+        return value
+
+    @model_validator(mode="after")
+    def validate_google_api_key(self) -> Settings:
+        if self.google_api_key is None:
+            raise ValueError("GOOGLE_API_KEY environment variable is not set.")
+        return self
 
     @property
     def resolved_browser_chromium_sandbox(self) -> bool:

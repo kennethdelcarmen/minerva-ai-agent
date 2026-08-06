@@ -14,8 +14,8 @@ from fastapi.testclient import TestClient
 from backend.agent.service import ManagedRunContext, RunService
 from backend.api import app as app_module
 
-os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
-os.environ.setdefault("OPENROUTER_MODEL", "google/gemini-2.5-flash:free")
+os.environ.setdefault("GOOGLE_API_KEY", "test-key")
+os.environ.setdefault("GOOGLE_MODEL", "gemini-3.5-flash-lite")
 
 from backend.api.app import create_app
 from backend.config import Settings
@@ -66,10 +66,10 @@ class FakeRunner:
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        OPENROUTER_API_KEY="test-key",
+        GOOGLE_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
         HEADLESS=True,
-        OPENROUTER_MODEL="google/gemini-2.5-flash:free",
+        GOOGLE_MODEL="gemini-3.5-flash-lite",
     )
 
 
@@ -102,6 +102,22 @@ def test_healthcheck(settings: Settings) -> None:
         response = client.get("/healthz")
         assert response.status_code == 200
         assert response.json() == {"status": "ok"}
+
+
+def test_models_endpoint_returns_google_catalog(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.get("/models")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "default_model": "gemini-3.5-flash-lite",
+        "models": [
+            {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite"},
+            {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
+            {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
+        ],
+    }
 
 
 def test_readyz_defaults_to_skipped_with_injected_service(settings: Settings) -> None:
@@ -188,6 +204,7 @@ def test_create_run_and_status(settings: Settings) -> None:
         assert status.status_code == 200
         assert status.json()["task"] == "Open example.com"
         assert status.json()["headless"] is True
+        assert status.json()["model"] == "gemini-3.5-flash-lite"
 
 
 def test_create_run_ignores_client_headless_override(settings: Settings) -> None:
@@ -196,6 +213,24 @@ def test_create_run_ignores_client_headless_override(settings: Settings) -> None
         response = client.post("/runs", json={"task": "Open example.com", "headless": False})
         assert response.status_code == 201
         assert response.json()["headless"] is True
+
+
+def test_create_run_accepts_supported_google_model_override(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.post("/runs", json={"task": "Open example.com", "model": "gemini-3.6-flash"})
+
+    assert response.status_code == 201
+    assert response.json()["model"] == "gemini-3.6-flash"
+
+
+def test_create_run_rejects_unsupported_model_override(settings: Settings) -> None:
+    runner = FakeRunner()
+    with create_test_client(settings, runner) as client:
+        response = client.post("/runs", json={"task": "Open example.com", "model": "gpt-5"})
+
+    assert response.status_code == 422
+    assert "model must be one of:" in response.text
 
 
 def test_sse_stream_emits_typed_events(settings: Settings) -> None:
@@ -351,10 +386,10 @@ async def test_completed_runs_are_evicted_from_memory(settings: Settings) -> Non
 
 def test_subscriber_backlog_is_bounded(settings: Settings) -> None:
     bounded_settings = Settings(
-        OPENROUTER_API_KEY="test-key",
+        GOOGLE_API_KEY="test-key",
         ARTIFACT_ROOT=settings.artifact_root,
         HEADLESS=True,
-        OPENROUTER_MODEL="google/gemini-2.5-flash:free",
+        GOOGLE_MODEL="gemini-3.5-flash-lite",
         EVENT_SUBSCRIBER_QUEUE_SIZE=3,
     )
     service = RunService(bounded_settings, FakeRunner())

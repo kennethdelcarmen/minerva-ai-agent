@@ -16,6 +16,7 @@ import {
   createRun,
   decideApproval,
   fetchArtifacts,
+  fetchModelCatalog,
   fetchResultArtifact,
   fetchRunStatus,
   isApiError,
@@ -33,6 +34,7 @@ import {
 import type {
   ArtifactDescriptor,
   EventType,
+  ModelCatalogResponse,
   ResultArtifactPayload,
   RunEvent,
   RunStatus,
@@ -123,6 +125,10 @@ async function loadRunSnapshot(runId: string): Promise<{
   };
 }
 
+function getSupportedModelIds(catalog: ModelCatalogResponse): Set<string> {
+  return new Set(catalog.models.map((option) => option.id))
+}
+
 function usePathname() {
   const [pathname, setPathname] = useState(() => window.location.pathname);
 
@@ -147,8 +153,34 @@ function usePathname() {
 function HomePage({ navigate }: { navigate: (path: string) => void }) {
   const [task, setTask] = useState("");
   const [model, setModel] = useState("");
+  const [modelCatalog, setModelCatalog] = useState<ModelCatalogResponse | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [modelCatalogError, setModelCatalogError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+
+    void fetchModelCatalog()
+      .then((catalog) => {
+        if (!active) {
+          return;
+        }
+
+        setModelCatalog(catalog);
+        setModel((current) => current || catalog.default_model);
+        setModelCatalogError(null);
+      })
+      .catch((error) => {
+        if (active) {
+          setModelCatalogError(getErrorMessage(error));
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, []);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -158,7 +190,7 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
     try {
       const created = await createRun({
         task,
-        model: model.trim() || null,
+        model: model || modelCatalog?.default_model || null,
       });
       startTransition(() => {
         navigate(`/runs/${created.run_id}`);
@@ -187,8 +219,10 @@ function HomePage({ navigate }: { navigate: (path: string) => void }) {
             setTask={setTask}
             model={model}
             setModel={setModel}
+            modelOptions={modelCatalog?.models ?? []}
+            modelSelectDisabled={modelCatalog === null && modelCatalogError === null}
             submitting={isSubmitting}
-            submitError={submitError}
+            submitError={submitError ?? modelCatalogError}
             onSubmit={handleSubmit}
             helperText="Describe the job in plain language and say exactly where Minerva should stop and ask you."
           />
@@ -512,9 +546,19 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
     setPageError(null);
 
     try {
+      let nextModel: string | null = null;
+
+      try {
+        const modelCatalog = await fetchModelCatalog();
+        const supportedModels = getSupportedModelIds(modelCatalog);
+        nextModel = supportedModels.has(status.model) ? status.model : modelCatalog.default_model;
+      } catch {
+        nextModel = null;
+      }
+
       const created = await createRun({
         task: status.task,
-        model: status.model,
+        model: nextModel,
       });
 
       startTransition(() => {

@@ -1,5 +1,6 @@
 import type {
   CreateRunRequest,
+  ModelCatalogResponse,
   ResultArtifactPayload,
   RunArtifactsResponse,
   RunStatusResponse,
@@ -93,6 +94,10 @@ export async function createRun(request: CreateRunRequest): Promise<RunStatusRes
     method: "POST",
     body: JSON.stringify(request),
   });
+}
+
+export async function fetchModelCatalog(): Promise<ModelCatalogResponse> {
+  return await fetchJson<ModelCatalogResponse>("/models");
 }
 
 export async function fetchRunStatus(runId: string): Promise<RunStatusResponse> {

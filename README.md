@@ -12,7 +12,7 @@ Minerva is a human-supervised browser agent with a FastAPI backend and a React o
 
 - Python 3.11+
 - Node 24+
-- `OPENROUTER_API_KEY`
+- `GOOGLE_API_KEY`
 
 ## Backend Setup
 
@@ -27,8 +27,8 @@ uv run browser-use install
 Create `apps/api/.env`:
 
 ```bash
-OPENROUTER_API_KEY=your-key
-OPENROUTER_MODEL=google/gemini-2.5-flash:free
+GOOGLE_API_KEY=your-key
+GOOGLE_MODEL=gemini-3.5-flash-lite
 BROWSER_CONTAINER_MODE=false
 BROWSER_PREFLIGHT_ON_STARTUP=false
 ```
@@ -49,7 +49,7 @@ uv run pytest
 
 ## Dockerized Backend
 
-Create `apps/api/.env` from the example file and set a real `OPENROUTER_API_KEY`:
+Create `apps/api/.env` from the example file and set a real `GOOGLE_API_KEY`:
 
 ```bash
 cp apps/api/.env.example apps/api/.env

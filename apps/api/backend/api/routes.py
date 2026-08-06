@@ -13,9 +13,12 @@ from backend.contracts.models import (
     ApprovalDecisionRequest,
     BrowserReadinessResponse,
     CreateRunRequest,
+    ModelCatalogResponse,
+    ModelOptionResponse,
     RunArtifactsResponse,
     RunStatusResponse,
 )
+from backend.model_catalog import DEFAULT_GOOGLE_MODEL, GOOGLE_MODEL_OPTIONS
 
 router = APIRouter()
 
@@ -23,6 +26,14 @@ router = APIRouter()
 @router.get("/healthz")
 async def healthcheck() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@router.get("/models", response_model=ModelCatalogResponse)
+async def list_models() -> ModelCatalogResponse:
+    return ModelCatalogResponse(
+        default_model=DEFAULT_GOOGLE_MODEL,
+        models=[ModelOptionResponse(id=option.id, label=option.label) for option in GOOGLE_MODEL_OPTIONS],
+    )
 
 
 @router.get("/readyz", response_model=BrowserReadinessResponse)

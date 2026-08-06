@@ -5,16 +5,18 @@ import { Bot, Play, ShieldCheck } from "lucide-react";
 import { StatusBadge } from "@/components/dashboard/dashboard-primitives";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Textarea } from "@/components/ui/textarea";
+import type { ModelOption } from "@/src/lib/types";
 
 export function LauncherCard({
   task,
   setTask,
   model,
   setModel,
+  modelOptions,
+  modelSelectDisabled = false,
   submitting,
   submitError,
   onSubmit,
@@ -27,6 +29,8 @@ export function LauncherCard({
   setTask: (value: string) => void;
   model: string;
   setModel: (value: string) => void;
+  modelOptions: ModelOption[];
+  modelSelectDisabled?: boolean;
   submitting: boolean;
   submitError: string | null;
   onSubmit: (event: FormEvent<HTMLFormElement>) => void;
@@ -87,15 +91,23 @@ export function LauncherCard({
             <div className="mt-4 grid gap-4">
               <div className="space-y-2">
                 <Label htmlFor={modelId}>Model override</Label>
-                <Input
+                <select
                   id={modelId}
                   name="model"
-                  type="text"
                   value={model}
                   onChange={(event) => setModel(event.target.value)}
-                  placeholder="gemini-3.6-flash"
-                  className="h-11 rounded-lg px-3.5"
-                />
+                  disabled={modelSelectDisabled}
+                  className="h-11 w-full rounded-lg border border-input bg-background px-3.5 text-sm text-foreground outline-none transition-colors focus-visible:border-ring focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {modelOptions.length === 0 ? (
+                    <option value="">{modelSelectDisabled ? "Loading models..." : "Default model"}</option>
+                  ) : null}
+                  {modelOptions.map((option) => (
+                    <option key={option.id} value={option.id}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
           </details>

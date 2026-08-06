@@ -91,7 +91,7 @@ class FakeContext:
     def __init__(self, run_dir: Path):
         self.run_id = "run-123"
         self.request = SimpleNamespace(task="Open the docs")
-        self.model = "google/gemini-2.5-flash:free"
+        self.model = "gemini-3.5-flash-lite"
         self.headless = True
         self.run_dir = run_dir
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -121,9 +121,9 @@ class FakeContext:
 @pytest.fixture
 def base_settings(tmp_path: Path) -> Settings:
     return Settings(
-        OPENROUTER_API_KEY="test-key",
+        GOOGLE_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
-        OPENROUTER_MODEL="google/gemini-2.5-flash:free",
+        GOOGLE_MODEL="gemini-3.5-flash-lite",
     )
 
 
@@ -131,7 +131,7 @@ def patch_runner_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeBrowserSession.instances = []
     monkeypatch.setattr(runner_module, "Agent", FakeAgent)
     monkeypatch.setattr(runner_module, "BrowserSession", FakeBrowserSession)
-    monkeypatch.setattr(runner_module, "ChatOpenRouter", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(runner_module, "create_google_llm", lambda **kwargs: SimpleNamespace(**kwargs))
 
 
 @pytest.mark.asyncio
@@ -205,6 +205,30 @@ async def test_runner_passes_resolved_browser_launch_config(
     session = FakeBrowserSession.instances[0]
     assert session.kwargs["chromium_sandbox"] is False
     assert session.kwargs["args"] == ["--no-sandbox=false", "--disable-dev-shm-usage=false", "--foo=bar"]
+
+
+@pytest.mark.asyncio
+async def test_runner_builds_google_llm_with_selected_model(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_create_google_llm(**kwargs):
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(**kwargs)
+
+    monkeypatch.setattr(runner_module, "create_google_llm", fake_create_google_llm)
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-llm")
+    context.model = "gemini-3.6-flash"
+
+    await runner.run(context)
+
+    assert captured_kwargs["model"] == "gemini-3.6-flash"
+    assert captured_kwargs["settings"] is base_settings
 
 
 class FlakyStartupAgent(FakeAgent):

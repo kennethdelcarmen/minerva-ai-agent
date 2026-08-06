@@ -19,6 +19,16 @@ export interface CreateRunRequest {
   model?: string | null;
 }
 
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
+export interface ModelCatalogResponse {
+  default_model: string;
+  models: ModelOption[];
+}
+
 export interface PendingApprovalResponse {
   id: string;
   action_name: string;

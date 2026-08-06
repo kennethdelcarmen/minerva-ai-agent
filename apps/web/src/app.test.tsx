@@ -79,6 +79,17 @@ function createResultPayload(): ResultArtifactPayload {
   };
 }
 
+function createModelCatalog() {
+  return {
+    default_model: "gemini-3.5-flash-lite",
+    models: [
+      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
+      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
+    ],
+  };
+}
+
 function installFetchMock(handler: (input: RequestInfo | URL, init?: RequestInit) => Response | Promise<Response>) {
   vi.stubGlobal(
     "fetch",
@@ -119,7 +130,17 @@ afterEach(() => {
 });
 
 describe("operator console", () => {
-  it("renders the guided idle shell", () => {
+  it("renders the guided idle shell", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
     render(<App />);
 
     expect(screen.getByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
@@ -128,9 +149,20 @@ describe("operator console", () => {
     expect(screen.getByRole("heading", { name: "What Minerva sees" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Activity and answer" })).toBeInTheDocument();
     expect(screen.getByText("Status updates will appear here")).toBeInTheDocument();
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
   });
 
   it("redirects unknown routes back to the launcher after 3 seconds", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
     vi.useFakeTimers();
     window.history.pushState({}, "", "/missing");
 
@@ -151,6 +183,10 @@ describe("operator console", () => {
     installFetchMock((input, init) => {
       const url = input.toString();
 
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
+
       if (url.endsWith("/runs") && init?.method === "POST") {
         return jsonResponse(createStatus());
       }
@@ -169,6 +205,7 @@ describe("operator console", () => {
     render(<App />);
 
     const user = userEvent.setup();
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
     await user.type(screen.getByLabelText("What should Minerva do?"), "Open example.com and summarize the page");
     await user.click(screen.getByRole("button", { name: "Start run" }));
 
@@ -686,11 +723,15 @@ describe("operator console", () => {
     ).not.toBeNull();
   });
 
-  it("retries a failed run from the sticky command bar", async () => {
+  it("falls back to the default model when retrying a legacy unsupported run", async () => {
     let retryRequest: Record<string, unknown> | null = null;
 
     installFetchMock((input, init) => {
       const url = input.toString();
+
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
 
       if (url.endsWith("/runs/run-123")) {
         return jsonResponse(
@@ -715,7 +756,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gpt-5",
+            model: "gemini-3.5-flash-lite",
           }),
         );
       }
@@ -725,7 +766,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gpt-5",
+            model: "gemini-3.5-flash-lite",
           }),
         );
       }
@@ -746,7 +787,76 @@ describe("operator console", () => {
     await screen.findByRole("heading", { name: "What Minerva is doing" });
     expect(retryRequest).toEqual({
       task: "Open example.com and summarize the page",
-      model: "gpt-5",
+      model: "gemini-3.5-flash-lite",
+    });
+    expect(window.location.pathname).toBe("/runs/run-456");
+  });
+
+  it("preserves a supported google model when retrying a failed run", async () => {
+    let retryRequest: Record<string, unknown> | null = null;
+
+    installFetchMock((input, init) => {
+      const url = input.toString();
+
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(
+          createStatus({
+            status: "failed",
+            task: "Open example.com and summarize the page",
+            model: "gemini-3.6-flash",
+            current_step_summary: "Navigation failed on the destination site.",
+            completed_at: "2026-08-03T10:02:00Z",
+            last_error: "Navigation timeout",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      if (url.endsWith("/runs") && init?.method === "POST") {
+        retryRequest = JSON.parse(String(init.body));
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            task: "Open example.com and summarize the page",
+            model: "gemini-3.6-flash",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-456")) {
+        return jsonResponse(
+          createStatus({
+            run_id: "run-456",
+            task: "Open example.com and summarize the page",
+            model: "gemini-3.6-flash",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-456/artifacts")) {
+        return jsonResponse({ run_id: "run-456", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: ${init?.method ?? "GET"} ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    await userEvent.click(within(commandBar).getByRole("button", { name: "Retry run" }));
+
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+    expect(retryRequest).toEqual({
+      task: "Open example.com and summarize the page",
+      model: "gemini-3.6-flash",
     });
     expect(window.location.pathname).toBe("/runs/run-456");
   });
@@ -754,6 +864,10 @@ describe("operator console", () => {
   it("switches the sticky command bar to start another run and routes back to the launcher", async () => {
     installFetchMock((input) => {
       const url = input.toString();
+
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
 
       if (url.endsWith("/runs/run-123")) {
         return jsonResponse(
@@ -786,6 +900,7 @@ describe("operator console", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
     expect(await screen.findByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
   });
 
   it("keeps the last known run visible and surfaces non-404 reconnect failures", async () => {
@@ -831,6 +946,10 @@ describe("operator console", () => {
     installFetchMock((input) => {
       const url = input.toString();
 
+      if (url.endsWith("/models")) {
+        return jsonResponse(createModelCatalog());
+      }
+
       if (url.endsWith("/runs/run-123")) {
         return jsonResponse(
           createStatus({
@@ -857,5 +976,6 @@ describe("operator console", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
     expect(await screen.findByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
   });
 });
