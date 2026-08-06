@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Awaitable, Callable, Protocol
 from uuid import uuid4
 
+from backend.agent.approval_display import describe_approval_action
 from backend.config import Settings
 from backend.contracts.models import (
     ApprovalDecision,
@@ -313,12 +314,13 @@ class RunService:
             reason=reason,
             requested_at=utc_now(),
         )
+        action_description = describe_approval_action(action_name, params)
         record.pending_approval = approval
         record.status = RunStatus.WAITING_FOR_APPROVAL
         await self._append_event(
             record,
             EventType.APPROVAL,
-            f'Approval required for "{action_name}".',
+            f"Approval required: {action_description}.",
             {
                 "approval_id": approval.id,
                 "action_name": action_name,

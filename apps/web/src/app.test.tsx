@@ -353,7 +353,9 @@ describe("operator console", () => {
     render(<App />);
 
     const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
+    expect(within(dialog).getByText("Click element #1")).toBeInTheDocument();
     expect(within(dialog).getByText("Click requires approval.")).toBeInTheDocument();
+    expect(within(dialog).getByText("Index")).toBeInTheDocument();
     expect(document.body.style.overflow).toBe("hidden");
     expect(within(dialog).queryByRole("button", { name: "Close modal" })).not.toBeInTheDocument();
 
@@ -421,11 +423,12 @@ describe("operator console", () => {
     });
 
     const dialog = await screen.findByRole("alertdialog", { name: "Approval required" });
+    expect(within(dialog).getByText("Click element #4")).toBeInTheDocument();
     expect(within(dialog).getByText("This click opens an external checkout page.")).toBeInTheDocument();
 
     const commandBar = screen.getByRole("region", { name: "Run command bar" });
     expect(within(commandBar).getByText("Waiting for your review")).toBeInTheDocument();
-    expect(within(commandBar).getByText('Approval required for "click".')).toBeInTheDocument();
+    expect(within(commandBar).getByText("Click element #4")).toBeInTheDocument();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).toBeNull();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="blocked"]')).not.toBeNull();
 

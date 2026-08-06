@@ -2,6 +2,7 @@ import { Clock3, RotateCcw, Square, Sparkles } from "lucide-react";
 
 import { ActivityIndicator, StatusBadge } from "@/components/dashboard/dashboard-primitives";
 import { Button } from "@/components/ui/button";
+import { approvalSummary } from "@/src/lib/approval-display";
 import {
   formatTimestamp,
   isTerminalStatus,
@@ -41,6 +42,7 @@ function summaryCopy(status: RunStatusResponse): { title: string; summary: strin
     return {
       title: "Waiting for your review",
       summary:
+        approvalSummary(status.pending_approval) ??
         status.current_step_summary ??
         "Minerva is waiting for your review before it can continue with a gated action.",
     };

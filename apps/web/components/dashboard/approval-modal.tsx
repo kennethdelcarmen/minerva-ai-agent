@@ -8,6 +8,7 @@ import { Modal } from "@/components/ui/modal";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { formatTimestamp } from "@/src/lib/dashboard-display";
+import { approvalDetailEntries, approvalSummary } from "@/src/lib/approval-display";
 import type { PendingApprovalResponse } from "@/src/lib/types";
 
 export function ApprovalModal({
@@ -34,6 +35,9 @@ export function ApprovalModal({
   if (!pendingApproval) {
     return null;
   }
+
+  const actionSummary = approvalSummary(pendingApproval) ?? pendingApproval.action_name;
+  const detailEntries = approvalDetailEntries(pendingApproval.action_name, pendingApproval.params);
 
   return (
     <Modal
@@ -90,7 +94,7 @@ export function ApprovalModal({
                 </StatusBadge>
               </div>
               <div className="space-y-2">
-                <h3 className="text-xl font-semibold text-white">{pendingApproval.reason}</h3>
+                <h3 className="text-xl font-semibold text-white">{actionSummary}</h3>
                 <p className="text-sm leading-6 text-[#f2d7b6]/82">
                   Requested {formatTimestamp(pendingApproval.requested_at)}. Review the action details below, then
                   approve or reject it.
@@ -98,6 +102,23 @@ export function ApprovalModal({
               </div>
             </div>
           </div>
+        </section>
+
+        <section className="rounded-xl border border-[#f2a65a]/16 bg-black/16 p-5">
+          <p className="font-mono text-[0.66rem] uppercase tracking-[0.18em] text-[#f2a65a]/70">Why this needs review</p>
+          <p className="mt-3 text-sm leading-6 text-[#f2d7b6]/82">{pendingApproval.reason}</p>
+          {detailEntries.length > 0 ? (
+            <dl className="mt-4 grid gap-3 sm:grid-cols-2">
+              {detailEntries.map((entry) => (
+                <div key={entry.label} className="rounded-lg border border-[#f2a65a]/14 bg-[#0d1317] px-4 py-3">
+                  <dt className="font-mono text-[0.66rem] uppercase tracking-[0.18em] text-[#f2a65a]/70">
+                    {entry.label}
+                  </dt>
+                  <dd className="mt-2 text-sm text-[#ffe3c1]">{entry.value}</dd>
+                </div>
+              ))}
+            </dl>
+          ) : null}
         </section>
 
         <section className="rounded-xl border border-[#f2a65a]/16 bg-black/16 p-5">
@@ -117,11 +138,11 @@ export function ApprovalModal({
 
         <details className="rounded-xl border border-[#f2a65a]/16 bg-black/16 p-5">
           <summary className="cursor-pointer list-none text-sm font-semibold text-[#ffe3c1]">
-            Action details
+            Raw action payload
           </summary>
           <div className="mt-4 space-y-4">
             <div className="rounded-lg border border-[#f2a65a]/14 bg-[#0d1317] px-4 py-3">
-              <p className="font-mono text-[0.66rem] uppercase tracking-[0.18em] text-[#f2a65a]/70">Action</p>
+              <p className="font-mono text-[0.66rem] uppercase tracking-[0.18em] text-[#f2a65a]/70">Action type</p>
               <p className="mt-2 text-sm text-[#ffe3c1]">{pendingApproval.action_name}</p>
             </div>
             <div className="space-y-2">
