@@ -51,7 +51,7 @@ class Settings(BaseSettings):
     max_steps: int = Field(default=25, alias="MAX_STEPS")
     event_subscriber_queue_size: int = Field(default=128, alias="EVENT_SUBSCRIBER_QUEUE_SIZE", ge=1)
     enable_step_timings: bool = Field(default=True, alias="ENABLE_STEP_TIMINGS")
-    step_screenshot_interval: int = Field(default=3, alias="STEP_SCREENSHOT_INTERVAL", ge=0)
+    step_screenshot_interval: int = Field(default=1, alias="STEP_SCREENSHOT_INTERVAL", ge=0)
     include_step_browser_state: bool = Field(default=False, alias="INCLUDE_STEP_BROWSER_STATE")
     approval_mode: Literal["strict", "speed"] = Field(default="speed", alias="APPROVAL_MODE")
     browser_container_mode: bool = Field(default=False, alias="BROWSER_CONTAINER_MODE")

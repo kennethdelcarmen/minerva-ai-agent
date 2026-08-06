@@ -23,6 +23,9 @@ class FakeRegistry:
 
 
 class FakeHistory:
+    def __init__(self, steps: int = 1):
+        self.steps = steps
+
     def is_successful(self) -> bool:
         return True
 
@@ -30,7 +33,7 @@ class FakeHistory:
         return "done"
 
     def number_of_steps(self) -> int:
-        return 1
+        return self.steps
 
     def urls(self) -> list[str]:
         return ["https://example.com/docs"]
@@ -185,6 +188,70 @@ async def test_runner_emits_screenshot_and_browser_state_when_enabled(
     assert result["timings"]["screenshots_captured"] == 1
     assert result["timings"]["browser_state_reads"] == 1
     assert result["timings"]["run_duration_ms"] >= 0
+
+
+class MultiStepFakeAgent(FakeAgent):
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        for step in range(1, 4):
+            await self.tools.registry.execute_action(action_name="click", params={"description": f"Step {step}"})
+            self.state.n_steps = step
+            self.state.last_model_output = SimpleNamespace(
+                next_goal=f"Continue to step {step}.",
+                memory=f"Completed step {step}",
+            )
+            await on_step_end(self)
+        return FakeHistory(steps=3)
+
+
+@pytest.mark.asyncio
+async def test_runner_captures_every_step_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    monkeypatch.setattr(runner_module, "Agent", MultiStepFakeAgent)
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-default-capture")
+
+    result = await runner.run(context)
+
+    screenshot_events = [
+        event for event in context.events if event["summary"].startswith("Captured browser state after step")
+    ]
+
+    assert [event["data"]["screenshot"] for event in screenshot_events] == [
+        "screenshots/step-001.png",
+        "screenshots/step-002.png",
+        "screenshots/step-003.png",
+    ]
+    assert result["timings"]["screenshots_captured"] == 3
+    assert result["timings"]["step_screenshot_interval"] == 1
+
+
+@pytest.mark.asyncio
+async def test_runner_respects_custom_screenshot_interval(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    monkeypatch.setattr(runner_module, "Agent", MultiStepFakeAgent)
+    settings = base_settings.model_copy(update={"step_screenshot_interval": 2})
+    runner = BrowserUseRunner(settings)
+    context = FakeContext(tmp_path / "run-periodic-capture")
+
+    result = await runner.run(context)
+
+    screenshot_events = [
+        event for event in context.events if event["summary"].startswith("Captured browser state after step")
+    ]
+    plain_step_events = [event for event in context.events if event["summary"] == "Step 3 completed."]
+
+    assert [event["data"]["step"] for event in screenshot_events] == [1, 2]
+    assert [event["data"]["step"] for event in plain_step_events] == [3]
+    assert result["timings"]["screenshots_captured"] == 2
+    assert result["timings"]["step_screenshot_interval"] == 2
 
 
 @pytest.mark.asyncio

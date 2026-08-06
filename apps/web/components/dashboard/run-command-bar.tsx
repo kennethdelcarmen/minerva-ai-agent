@@ -81,6 +81,7 @@ export function RunCommandBar({
   const { title, summary } = summaryCopy(status);
   const terminal = isTerminalStatus(status.status);
   const indicatorState = runIndicatorState(status.status, Boolean(status.pending_approval));
+  const showRetry = terminal && status.status === "failed" && onRetry;
 
   return (
     <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 px-3 pb-[calc(env(safe-area-inset-bottom)+0.75rem)] sm:px-5 lg:px-7">
@@ -108,22 +109,26 @@ export function RunCommandBar({
             </div>
 
             <div className="flex shrink-0 items-center gap-3">
-              {terminal && status.status === "failed" && onRetry ? (
-                <Button
-                  type="button"
-                  size="lg"
-                  className="rounded-md px-5"
-                  onClick={onRetry}
-                  disabled={retryBusy}
-                >
-                  <RotateCcw className="size-4" />
-                  {retryBusy ? "Retrying..." : "Retry run"}
-                </Button>
-              ) : terminal ? (
-                <Button type="button" size="lg" className="rounded-md px-5" onClick={onStartAnotherRun}>
-                  <Sparkles className="size-4" />
-                  Start another run
-                </Button>
+              {terminal ? (
+                <>
+                  {showRetry ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="lg"
+                      className="rounded-md px-5"
+                      onClick={onRetry}
+                      disabled={retryBusy}
+                    >
+                      <RotateCcw className="size-4" />
+                      {retryBusy ? "Retrying..." : "Retry run"}
+                    </Button>
+                  ) : null}
+                  <Button type="button" size="lg" className="rounded-md px-5" onClick={onStartAnotherRun}>
+                    <Sparkles className="size-4" />
+                    New run
+                  </Button>
+                </>
               ) : onStop ? (
                 <Button
                   type="button"

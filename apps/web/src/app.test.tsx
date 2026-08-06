@@ -785,6 +785,9 @@ describe("operator console", () => {
     render(<App />);
 
     const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    const commandBarButtons = within(commandBar).getAllByRole("button");
+    expect(commandBarButtons[0]).toHaveTextContent("Retry run");
+    expect(commandBarButtons[1]).toHaveTextContent("New run");
     await userEvent.click(within(commandBar).getByRole("button", { name: "Retry run" }));
 
     await screen.findByRole("heading", { name: "What Minerva is doing" });
@@ -854,6 +857,9 @@ describe("operator console", () => {
     render(<App />);
 
     const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    const commandBarButtons = within(commandBar).getAllByRole("button");
+    expect(commandBarButtons[0]).toHaveTextContent("Retry run");
+    expect(commandBarButtons[1]).toHaveTextContent("New run");
     await userEvent.click(within(commandBar).getByRole("button", { name: "Retry run" }));
 
     await screen.findByRole("heading", { name: "What Minerva is doing" });
@@ -864,7 +870,7 @@ describe("operator console", () => {
     expect(window.location.pathname).toBe("/runs/run-456");
   });
 
-  it("switches the sticky command bar to start another run and routes back to the launcher", async () => {
+  it("switches the sticky command bar to new run and routes back to the launcher", async () => {
     installFetchMock((input) => {
       const url = input.toString();
 
@@ -896,14 +902,93 @@ describe("operator console", () => {
     expect(within(commandBar).getByText("Run complete")).toBeInTheDocument();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="running"]')).toBeNull();
     expect(commandBar.querySelector('[data-slot="activity-indicator"][data-state="success"]')).not.toBeNull();
-    expect(screen.queryByRole("heading", { name: "Start another run" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "New run" })).not.toBeInTheDocument();
 
-    await userEvent.click(within(commandBar).getByRole("button", { name: "Start another run" }));
+    await userEvent.click(within(commandBar).getByRole("button", { name: "New run" }));
 
     expect(window.location.pathname).toBe("/");
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
     expect(await screen.findByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
     expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
+  });
+
+  it("keeps new run as the primary failed-run action and exposes retry as secondary", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(
+          createStatus({
+            status: "failed",
+            current_step_summary: "Navigation failed on the destination site.",
+            completed_at: "2026-08-03T10:02:00Z",
+            last_error: "Navigation timeout",
+          }),
+        );
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const commandBar = await screen.findByRole("region", { name: "Run command bar" });
+    const buttons = within(commandBar).getAllByRole("button");
+
+    expect(buttons).toHaveLength(2);
+    expect(buttons[0]).toHaveTextContent("Retry run");
+    expect(buttons[1]).toHaveTextContent("New run");
+    expect(buttons[0]).toHaveClass("bg-transparent");
+    expect(buttons[1]).toHaveClass("bg-primary");
+  });
+
+  it("adds streamed screenshots to the live artifact list immediately", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ current_step_summary: "Watching the page update." }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+    expect(screen.queryByRole("link", { name: /screenshots\/step-002\.png/i })).not.toBeInTheDocument();
+
+    await act(async () => {
+      MockEventSource.instances[0].emit("observation", {
+        id: "event-observation",
+        run_id: "run-123",
+        sequence: 2,
+        type: "observation",
+        summary: "Captured browser state after step 2.",
+        timestamp: "2026-08-03T10:00:03Z",
+        data: {
+          step: 2,
+          screenshot: "screenshots/step-002.png",
+        },
+      });
+    });
+
+    await userEvent.click(screen.getByRole("tab", { name: "Final answer" }));
+    expect(await screen.findByRole("link", { name: /screenshots\/step-002\.png/i })).toBeInTheDocument();
+    expect(screen.getByAltText("Latest browser state captured by the agent")).toHaveAttribute(
+      "src",
+      expect.stringContaining("/runs/run-123/artifacts/screenshots/step-002.png"),
+    );
   });
 
   it("keeps the last known run visible and surfaces non-404 reconnect failures", async () => {

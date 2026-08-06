@@ -106,6 +106,20 @@ function latestScreenshotPath(artifacts: ArtifactDescriptor[]): string | null {
   return null;
 }
 
+function upsertArtifact(artifacts: ArtifactDescriptor[], nextArtifact: ArtifactDescriptor): ArtifactDescriptor[] {
+  const existingIndex = artifacts.findIndex((artifact) => artifact.path === nextArtifact.path);
+  if (existingIndex === -1) {
+    return [...artifacts, nextArtifact];
+  }
+
+  const nextArtifacts = [...artifacts];
+  nextArtifacts[existingIndex] = {
+    ...nextArtifacts[existingIndex],
+    ...nextArtifact,
+  };
+  return nextArtifacts;
+}
+
 async function loadRunSnapshot(runId: string): Promise<{
   status: RunStatusResponse;
   artifacts: ArtifactDescriptor[];
@@ -473,6 +487,13 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 
         if (typeof payload.data.screenshot === "string") {
           setScreenshotPath(payload.data.screenshot);
+          setArtifacts((current) =>
+            upsertArtifact(current, {
+              kind: "screenshot",
+              path: payload.data.screenshot,
+              size_bytes: 0,
+            }),
+          );
         }
 
         if (payload.type === "result") {

@@ -75,7 +75,7 @@ def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
     assert settings.headless is True
 
 
-def test_speed_defaults_enable_timings_and_sparse_screenshots(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_speed_defaults_enable_timings_and_per_step_screenshots(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
 
@@ -83,7 +83,7 @@ def test_speed_defaults_enable_timings_and_sparse_screenshots(monkeypatch: pytes
 
     assert settings.enable_step_timings is True
     assert settings.google_model == "gemini-3.5-flash-lite"
-    assert settings.step_screenshot_interval == 3
+    assert settings.step_screenshot_interval == 1
     assert settings.include_step_browser_state is False
     assert settings.approval_mode == "speed"
 
