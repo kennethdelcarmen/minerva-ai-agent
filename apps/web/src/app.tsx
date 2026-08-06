@@ -140,7 +140,38 @@ async function loadRunSnapshot(runId: string): Promise<{
 }
 
 function getSupportedModelIds(catalog: ModelCatalogResponse): Set<string> {
-  return new Set(catalog.models.map((option) => option.id))
+  return new Set(catalog.models.map((option) => option.id));
+}
+
+function parseRunEvent(data: MessageEvent["data"]): RunEvent | null {
+  if (typeof data !== "string") {
+    return null;
+  }
+
+  const trimmed = data.trim();
+  if (!trimmed) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(trimmed) as Partial<RunEvent>;
+    if (
+      typeof parsed.id !== "string" ||
+      typeof parsed.run_id !== "string" ||
+      typeof parsed.sequence !== "number" ||
+      typeof parsed.type !== "string" ||
+      typeof parsed.summary !== "string" ||
+      typeof parsed.timestamp !== "string" ||
+      typeof parsed.data !== "object" ||
+      parsed.data === null
+    ) {
+      return null;
+    }
+
+    return parsed as RunEvent;
+  } catch {
+    return null;
+  }
 }
 
 function usePathname() {
@@ -420,7 +451,10 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 
     const listeners = EVENT_TYPES.map((eventType) => {
       const handler = (message: MessageEvent<string>) => {
-        const payload = JSON.parse(message.data) as RunEvent;
+        const payload = parseRunEvent(message.data);
+        if (!payload) {
+          return;
+        }
 
         setEvents((current) => {
           if (current.some((event) => event.id === payload.id)) {
@@ -485,12 +519,13 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
           return next;
         });
 
-        if (typeof payload.data.screenshot === "string") {
-          setScreenshotPath(payload.data.screenshot);
+        const screenshotPath = payload.data.screenshot;
+        if (typeof screenshotPath === "string") {
+          setScreenshotPath(screenshotPath);
           setArtifacts((current) =>
             upsertArtifact(current, {
               kind: "screenshot",
-              path: payload.data.screenshot,
+              path: screenshotPath,
               size_bytes: 0,
             }),
           );
@@ -498,6 +533,7 @@ function RunPage({ runId, navigate }: { runId: string; navigate: (path: string) 
 
         if (payload.type === "result") {
           setConnectionState("complete");
+          stream.close();
           const hasResultArtifact = artifactsRef.current.some((artifact) => artifact.path === "result.json");
           if (!hasResultArtifact || resultPayloadRef.current === null) {
             void loadRunSnapshot(runId)

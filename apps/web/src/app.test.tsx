@@ -48,6 +48,18 @@ class MockEventSource {
       handler(event);
     }
   }
+
+  emitRaw(type: string, data: string | undefined) {
+    const handlers = this.listeners.get(type);
+    if (!handlers) {
+      return;
+    }
+
+    const event = new MessageEvent("message", { data: data as any });
+    for (const handler of handlers) {
+      handler(event);
+    }
+  }
 }
 
 function createStatus(overrides: Partial<RunStatusResponse> = {}): RunStatusResponse {
@@ -272,6 +284,34 @@ describe("operator console", () => {
 
     const activityPanel = screen.getByRole("tabpanel", { name: "Activity" });
     expect(within(activityPanel).getAllByText("Searching the pricing page.").length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("ignores malformed SSE payloads instead of crashing the run view", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus());
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({ run_id: "run-123", artifacts: [] });
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "What Minerva is doing" });
+
+    await act(async () => {
+      MockEventSource.instances[0].emitRaw("plan", "undefined");
+    });
+
+    expect(screen.getByRole("heading", { name: "What Minerva is doing" })).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Run command bar" })).toBeInTheDocument();
   });
 
   it("renders the refreshed run summary with a primary step panel and operator controls", async () => {
