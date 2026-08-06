@@ -39,6 +39,8 @@ def build_browser_readiness(
         status=status,
         browser=BrowserRuntimeReadiness(
             preflight=preflight,
+            provider=launch_config.provider,
+            endpoint_host=launch_config.endpoint_host,
             container_mode=settings.browser_container_mode,
             chromium_sandbox=launch_config.chromium_sandbox,
             launch_args=launch_config.args,
@@ -83,7 +85,7 @@ def create_app(
                     resolved_settings,
                     runner,
                     preflight=BrowserReadinessState.FAILED,
-                    last_error=str(exc),
+                    last_error=resolved_settings.redact_sensitive_text(str(exc)),
                 )
             else:
                 app.state.browser_readiness = build_browser_readiness(

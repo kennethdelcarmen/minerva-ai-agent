@@ -17,8 +17,10 @@ from backend.llm import create_google_llm
 
 @dataclass(frozen=True)
 class BrowserLaunchConfig:
+    provider: str
+    endpoint_host: str | None
     args: list[str]
-    chromium_sandbox: bool
+    chromium_sandbox: bool | None
 
 
 class BrowserUseRunner:
@@ -38,7 +40,17 @@ class BrowserUseRunner:
         return round(duration_seconds * 1000, 2)
 
     def browser_launch_config(self) -> BrowserLaunchConfig:
+        if self.settings.browser_provider == "browserless":
+            return BrowserLaunchConfig(
+                provider="browserless",
+                endpoint_host=self.settings.browserless_host,
+                args=[],
+                chromium_sandbox=None,
+            )
+
         return BrowserLaunchConfig(
+            provider="local",
+            endpoint_host=None,
             args=self.settings.resolved_browser_launch_args,
             chromium_sandbox=self.settings.resolved_browser_chromium_sandbox,
         )
@@ -62,15 +74,28 @@ class BrowserUseRunner:
         return step_number == 1 or step_number % interval == 0
 
     def _build_browser_session(self, *, headless: bool, run_dir) -> BrowserSession:
+        common_kwargs = {
+            "traces_dir": str(run_dir / "traces"),
+            "record_video_dir": str(run_dir / "videos"),
+            "downloads_path": str(run_dir / "downloads"),
+        }
+        if self.settings.browser_provider == "browserless":
+            return BrowserSession(
+                cdp_url=self.settings.resolved_browserless_cdp_url,
+                is_local=False,
+                **common_kwargs,
+            )
+
         launch_config = self.browser_launch_config()
         return BrowserSession(
             headless=headless,
-            traces_dir=str(run_dir / "traces"),
-            record_video_dir=str(run_dir / "videos"),
-            downloads_path=str(run_dir / "downloads"),
             args=launch_config.args,
             chromium_sandbox=launch_config.chromium_sandbox,
+            **common_kwargs,
         )
+
+    def _sanitized_error(self, error: Exception) -> str:
+        return self.settings.redact_sensitive_text(str(error))
 
     async def _close_browser_session(self, browser: BrowserSession | None) -> None:
         if browser is None:
@@ -113,7 +138,9 @@ class BrowserUseRunner:
                     {
                         "attempt": attempt,
                         "max_attempts": max_attempts,
-                        "error": str(exc),
+                        "error": self._sanitized_error(exc),
+                        "provider": self.browser_launch_config().provider,
+                        "endpoint_host": self.browser_launch_config().endpoint_host,
                         "launch_args": self.browser_launch_config().args,
                         "chromium_sandbox": self.browser_launch_config().chromium_sandbox,
                         "hints": remediation_hints,
@@ -242,7 +269,7 @@ class BrowserUseRunner:
                         if screenshot_saved:
                             screenshots_captured += 1
                     except Exception as exc:
-                        error_data = {"step": step_number, "error": str(exc)}
+                        error_data = {"step": step_number, "error": self._sanitized_error(exc)}
                         timings = self._timings_payload(
                             step_duration_ms=step_duration,
                             capture_duration_ms=perf_counter() - capture_started_at,

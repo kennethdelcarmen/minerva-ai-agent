@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from pydantic import SecretStr
 
 from backend.agent import browser_use_runner as runner_module
 from backend.agent.browser_use_runner import BrowserUseRunner
@@ -124,6 +125,7 @@ def base_settings(tmp_path: Path) -> Settings:
         GOOGLE_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
         GOOGLE_MODEL="gemini-3.5-flash-lite",
+        BROWSER_PROVIDER="local",
     )
 
 
@@ -205,6 +207,38 @@ async def test_runner_passes_resolved_browser_launch_config(
     session = FakeBrowserSession.instances[0]
     assert session.kwargs["chromium_sandbox"] is False
     assert session.kwargs["args"] == ["--no-sandbox=false", "--disable-dev-shm-usage=false", "--foo=bar"]
+    assert session.kwargs["traces_dir"] == str((tmp_path / "run-launch-config") / "traces")
+    assert session.kwargs["record_video_dir"] == str((tmp_path / "run-launch-config") / "videos")
+    assert session.kwargs["downloads_path"] == str((tmp_path / "run-launch-config") / "downloads")
+
+
+@pytest.mark.asyncio
+async def test_runner_uses_browserless_cdp_session_when_provider_is_browserless(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    settings = base_settings.model_copy(
+        update={
+            "browser_provider": "browserless",
+            "browserless_host": "production-sfo.browserless.io",
+            "browserless_token": SecretStr("test-token"),
+        }
+    )
+    runner = BrowserUseRunner(settings)
+
+    await runner.run(FakeContext(tmp_path / "run-browserless"))
+
+    session = FakeBrowserSession.instances[0]
+    assert session.kwargs["cdp_url"] == "wss://production-sfo.browserless.io?token=test-token"
+    assert session.kwargs["is_local"] is False
+    assert session.kwargs["traces_dir"] == str((tmp_path / "run-browserless") / "traces")
+    assert session.kwargs["record_video_dir"] == str((tmp_path / "run-browserless") / "videos")
+    assert session.kwargs["downloads_path"] == str((tmp_path / "run-browserless") / "downloads")
+    assert "headless" not in session.kwargs
+    assert "args" not in session.kwargs
+    assert "chromium_sandbox" not in session.kwargs
 
 
 @pytest.mark.asyncio

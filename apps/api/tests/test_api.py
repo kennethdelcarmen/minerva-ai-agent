@@ -10,12 +10,14 @@ from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
-
-from backend.agent.service import ManagedRunContext, RunService
-from backend.api import app as app_module
+from pydantic import SecretStr
 
 os.environ.setdefault("GOOGLE_API_KEY", "test-key")
 os.environ.setdefault("GOOGLE_MODEL", "gemini-3.5-flash-lite")
+os.environ.setdefault("BROWSER_PROVIDER", "local")
+
+from backend.agent.service import ManagedRunContext, RunService
+from backend.api import app as app_module
 
 from backend.api.app import create_app
 from backend.config import Settings
@@ -70,6 +72,7 @@ def settings(tmp_path: Path) -> Settings:
         ARTIFACT_ROOT=tmp_path,
         HEADLESS=True,
         GOOGLE_MODEL="gemini-3.5-flash-lite",
+        BROWSER_PROVIDER="local",
     )
 
 
@@ -130,8 +133,37 @@ def test_readyz_defaults_to_skipped_with_injected_service(settings: Settings) ->
         "status": "ok",
         "browser": {
             "preflight": "skipped",
+            "provider": "local",
+            "endpoint_host": None,
             "container_mode": False,
             "chromium_sandbox": True,
+            "launch_args": [],
+            "last_error": None,
+        },
+    }
+
+
+def test_readyz_reports_browserless_runtime(settings: Settings) -> None:
+    runner = FakeRunner()
+    browserless_settings = settings.model_copy(
+        update={
+            "browser_provider": "browserless",
+            "browserless_host": "production-sfo.browserless.io",
+            "browserless_token": SecretStr("test-token"),
+        }
+    )
+    with create_test_client(browserless_settings, runner) as client:
+        response = client.get("/readyz")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "ok",
+        "browser": {
+            "preflight": "skipped",
+            "provider": "browserless",
+            "endpoint_host": "production-sfo.browserless.io",
+            "container_mode": False,
+            "chromium_sandbox": None,
             "launch_args": [],
             "last_error": None,
         },
@@ -144,6 +176,8 @@ def test_readyz_returns_cached_failure_payload(settings: Settings) -> None:
         status="failed",
         browser=BrowserRuntimeReadiness(
             preflight=BrowserReadinessState.FAILED,
+            provider="local",
+            endpoint_host=None,
             container_mode=True,
             chromium_sandbox=False,
             launch_args=["--disable-dev-shm-usage", "--no-sandbox"],
@@ -181,12 +215,38 @@ def test_readyz_reports_passed_preflight_from_lifespan(monkeypatch: pytest.Monke
         "status": "ok",
         "browser": {
             "preflight": "passed",
+            "provider": "local",
+            "endpoint_host": None,
             "container_mode": True,
             "chromium_sandbox": False,
             "launch_args": ["--disable-dev-shm-usage", "--no-sandbox"],
             "last_error": None,
         },
     }
+
+
+def test_failed_run_redacts_browserless_token_from_status(settings: Settings) -> None:
+    sensitive_token = "secret-browserless-token"
+
+    class SensitiveErrorRunner(FakeRunner):
+        async def run(self, context: ManagedRunContext) -> dict[str, Any]:
+            raise RuntimeError(f"Browser failed for wss://production-sfo.browserless.io?token={sensitive_token}")
+
+    browserless_settings = settings.model_copy(
+        update={
+            "browser_provider": "browserless",
+            "browserless_host": "production-sfo.browserless.io",
+            "browserless_token": SecretStr(sensitive_token),
+        }
+    )
+    runner = SensitiveErrorRunner(mode="error")
+    with create_test_client(browserless_settings, runner) as client:
+        run_id = client.post("/runs", json={"task": "Fail with sensitive browser URL"}).json()["run_id"]
+
+        status = wait_for_status(client, run_id, "failed")
+
+    assert sensitive_token not in status["last_error"]
+    assert "[REDACTED]" in status["last_error"]
 
 
 def test_create_run_and_status(settings: Settings) -> None:
@@ -390,6 +450,7 @@ def test_subscriber_backlog_is_bounded(settings: Settings) -> None:
         ARTIFACT_ROOT=settings.artifact_root,
         HEADLESS=True,
         GOOGLE_MODEL="gemini-3.5-flash-lite",
+        BROWSER_PROVIDER="local",
         EVENT_SUBSCRIBER_QUEUE_SIZE=3,
     )
     service = RunService(bounded_settings, FakeRunner())

@@ -123,6 +123,20 @@ class RunService:
         self._lock = asyncio.Lock()
         self._subscriber_queue_size = settings.event_subscriber_queue_size
 
+    def _sanitize_text(self, value: str) -> str:
+        return self.settings.redact_sensitive_text(value)
+
+    def _sanitize_data(self, value: Any) -> Any:
+        if isinstance(value, str):
+            return self._sanitize_text(value)
+        if isinstance(value, dict):
+            return {key: self._sanitize_data(item) for key, item in value.items()}
+        if isinstance(value, list):
+            return [self._sanitize_data(item) for item in value]
+        if isinstance(value, tuple):
+            return tuple(self._sanitize_data(item) for item in value)
+        return value
+
     async def create_run(self, request: CreateRunRequest) -> RunStatusResponse:
         run_id = str(uuid4())
         created_at = utc_now()
@@ -165,20 +179,22 @@ class RunService:
             elif record.status not in {RunStatus.FAILED, RunStatus.STOPPED}:
                 record.status = RunStatus.SUCCEEDED if final_payload.get("success", False) else RunStatus.FAILED
         except ApprovalRejectedError as exc:
+            error_message = self._sanitize_text(str(exc))
             record.status = RunStatus.FAILED
-            record.last_error = str(exc)
-            final_payload = {"success": False, "error": str(exc), "final_output": None}
-            await self._append_event(record, EventType.ERROR, "Approval rejected.", {"error": str(exc)})
+            record.last_error = error_message
+            final_payload = {"success": False, "error": error_message, "final_output": None}
+            await self._append_event(record, EventType.ERROR, "Approval rejected.", {"error": error_message})
         except asyncio.CancelledError:
             record.status = RunStatus.STOPPED
             final_payload = {"success": False, "error": "Run cancelled.", "final_output": None}
             await self._append_event(record, EventType.ERROR, "Run cancelled.", {"error": "Run cancelled."})
             raise
         except Exception as exc:
+            error_message = self._sanitize_text(str(exc))
             record.status = RunStatus.FAILED
-            record.last_error = str(exc)
-            final_payload = {"success": False, "error": str(exc), "final_output": None}
-            await self._append_event(record, EventType.ERROR, "Run failed.", {"error": str(exc)})
+            record.last_error = error_message
+            final_payload = {"success": False, "error": error_message, "final_output": None}
+            await self._append_event(record, EventType.ERROR, "Run failed.", {"error": error_message})
         finally:
             record.completed_at = utc_now()
             record.updated_at = record.completed_at
@@ -282,7 +298,7 @@ class RunService:
                 sequence=record.sequence,
                 type=event_type,
                 summary=summary,
-                data=data,
+                data=self._sanitize_data(data),
             )
             self.store.append_event(record.run_dir, event)
             for subscriber in tuple(record.subscribers):

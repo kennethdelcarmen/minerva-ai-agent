@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Annotated
 from typing import Any
 from typing import Literal
+from urllib.parse import quote
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
@@ -36,6 +37,13 @@ class Settings(BaseSettings):
         default=DEFAULT_GOOGLE_MODEL,
         validation_alias=AliasChoices("GOOGLE_MODEL"),
         serialization_alias="GOOGLE_MODEL",
+    )
+    browser_provider: Literal["browserless", "local"] = Field(default="browserless", alias="BROWSER_PROVIDER")
+    browserless_host: str = Field(default="production-sfo.browserless.io", alias="BROWSERLESS_HOST")
+    browserless_token: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("BROWSERLESS_TOKEN"),
+        serialization_alias="BROWSERLESS_TOKEN",
     )
     headless: bool = Field(default=True, alias="HEADLESS")
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
@@ -101,6 +109,8 @@ class Settings(BaseSettings):
     def validate_google_api_key(self) -> Settings:
         if self.google_api_key is None:
             raise ValueError("GOOGLE_API_KEY environment variable is not set.")
+        if self.browser_provider == "browserless" and self.browserless_token is None:
+            raise ValueError("BROWSERLESS_TOKEN environment variable is not set when BROWSER_PROVIDER=browserless.")
         return self
 
     @property
@@ -119,6 +129,24 @@ class Settings(BaseSettings):
             default_args.append("--no-sandbox")
 
         return _merge_browser_launch_args(default_args, self.browser_launch_args)
+
+    @property
+    def resolved_browserless_cdp_url(self) -> str:
+        token = self.browserless_token
+        if token is None:
+            raise ValueError("BROWSERLESS_TOKEN environment variable is not set when BROWSER_PROVIDER=browserless.")
+
+        return f"wss://{self.browserless_host}?token={quote(token.get_secret_value(), safe='')}"
+
+    def redact_sensitive_text(self, text: str) -> str:
+        redacted = text
+        token = self.browserless_token
+        if token is not None:
+            secret = token.get_secret_value()
+            for candidate in {secret, quote(secret, safe="")}:
+                if candidate:
+                    redacted = redacted.replace(candidate, "[REDACTED]")
+        return redacted
 
 
 def _browser_arg_key(arg: str) -> str:

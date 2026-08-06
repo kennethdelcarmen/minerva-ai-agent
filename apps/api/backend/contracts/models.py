@@ -135,8 +135,10 @@ class BrowserReadinessState(str, Enum):
 
 class BrowserRuntimeReadiness(BaseModel):
     preflight: BrowserReadinessState
+    provider: Literal["browserless", "local"]
+    endpoint_host: str | None = None
     container_mode: bool
-    chromium_sandbox: bool
+    chromium_sandbox: bool | None
     launch_args: list[str]
     last_error: str | None = None
 
