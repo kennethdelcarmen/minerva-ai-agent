@@ -88,8 +88,17 @@ class FakeAgent:
             n_steps=0,
         )
         self.tools = SimpleNamespace(registry=FakeRegistry())
+        self._message_manager = SimpleNamespace(task=task)
         self.stop_called = False
         self.closed = False
+
+        def add_new_task(new_task: str) -> None:
+            wrapped = f"<follow_up_user_request> {new_task.strip()} </follow_up_user_request>"
+            if "<initial_user_request>" not in self._message_manager.task:
+                self._message_manager.task = f"<initial_user_request>{self._message_manager.task}</initial_user_request>"
+            self._message_manager.task += f"\n{wrapped}"
+
+        self._message_manager.add_new_task = add_new_task
 
     def stop(self) -> None:
         self.stop_called = True
@@ -417,6 +426,7 @@ def test_is_bot_blocked_matches_common_anti_bot_markers() -> None:
 
 class BlockedPageAgent(FakeAgent):
     observed_fallback_content: list[str] = []
+    observed_fallback_task: str = ""
 
     async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
         session = self.browser_session
@@ -432,6 +442,7 @@ class BlockedPageAgent(FakeAgent):
         self.__class__.observed_fallback_content = [
             item.extracted_content for item in self.state.last_result if getattr(item, "extracted_content", None)
         ]
+        self.__class__.observed_fallback_task = self._message_manager.task
 
         retry_result = await self.tools.registry.execute_action(action_name="click", params={"description": "Retry blocked"})
         self.state.last_result = [retry_result]
@@ -457,6 +468,7 @@ async def test_runner_fetches_jina_fallback_once_and_continues(
 ) -> None:
     patch_runner_dependencies(monkeypatch)
     BlockedPageAgent.observed_fallback_content = []
+    BlockedPageAgent.observed_fallback_task = ""
     monkeypatch.setattr(runner_module, "Agent", BlockedPageAgent)
 
     fetch_calls: list[str] = []
@@ -475,6 +487,8 @@ async def test_runner_fetches_jina_fallback_once_and_continues(
     assert result["success"] is True
     assert fetch_calls == ["https://blocked.example.com/item"]
     assert BlockedPageAgent.observed_fallback_content == ["# Fallback markdown\n\nBlocked product details"]
+    assert "Jina Reader fallback" in BlockedPageAgent.observed_fallback_task
+    assert "https://blocked.example.com/item" in BlockedPageAgent.observed_fallback_task
     fallback_event = next(
         event
         for event in context.events

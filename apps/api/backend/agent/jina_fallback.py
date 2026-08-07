@@ -41,6 +41,7 @@ class JinaFallbackState:
 
     markdown_by_url: dict[str, str] = field(default_factory=dict)
     active_blocked_url: str | None = None
+    prompted_urls: set[str] = field(default_factory=set)
 
 
 def _normalize_text(value: str) -> str:

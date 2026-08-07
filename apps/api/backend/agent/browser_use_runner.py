@@ -178,6 +178,14 @@ class BrowserUseRunner:
             ),
         )
 
+    def _fallback_prompt_instruction(self, *, url: str) -> str:
+        return (
+            f"The live browser page at {url} is blocked by anti-bot or CAPTCHA protection. "
+            "A Jina Reader fallback for this same page has been attached to your recent observations. "
+            "Use that fallback content for extraction and reasoning on this page instead of retrying blocked interactions. "
+            "If the broader task needs additional pages, resume normal browser-use actions only after navigating to a different reachable page."
+        )
+
     async def _activate_jina_fallback(
         self,
         *,
@@ -203,6 +211,14 @@ class BrowserUseRunner:
             last_result.append(fallback_result)
         else:
             current_agent.state.last_result = [fallback_result]
+
+        if url not in fallback_state.prompted_urls:
+            instruction = self._fallback_prompt_instruction(url=url)
+            message_manager = getattr(current_agent, "_message_manager", None)
+            if message_manager is not None and hasattr(message_manager, "add_new_task"):
+                message_manager.add_new_task(instruction)
+                current_agent.task = getattr(message_manager, "task", current_agent.task)
+            fallback_state.prompted_urls.add(url)
 
     async def run_preflight(self) -> None:
         preflight_dir = self.settings.artifact_root / "_preflight"
