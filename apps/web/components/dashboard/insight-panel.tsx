@@ -36,6 +36,17 @@ function buildPreviewText(value: unknown): string {
     .trim();
 }
 
+function readBlockedResult(payload: ResultArtifactPayload | null): { status: "blocked"; message: string } | null {
+  if (!payload || payload.result.status !== "blocked" || typeof payload.result.message !== "string") {
+    return null;
+  }
+
+  return {
+    status: "blocked",
+    message: payload.result.message,
+  };
+}
+
 function ReasoningPanel({
   events,
   status,
@@ -133,7 +144,11 @@ function ResultPanel({
 }) {
   const deferredArtifacts = useDeferredValue(artifacts);
   const terminalStatus = resultPayload?.status.status ?? null;
-  const finalOutput = resultPayload?.result.final_output;
+  const blockedResult = readBlockedResult(resultPayload);
+  const finalOutput =
+    typeof resultPayload?.result.final_output === "string"
+      ? resultPayload.result.final_output
+      : blockedResult?.message;
   const previewText = buildPreviewText(finalOutput);
   const preview = previewText.length > 220 ? `${previewText.slice(0, 220).trimEnd()}...` : previewText;
 
@@ -141,7 +156,7 @@ function ResultPanel({
     <div className="space-y-4">
       <p className="text-sm leading-6 text-muted-foreground">
         {terminalStatus
-          ? `Final status: ${statusLabel(terminalStatus)}`
+          ? `Final status: ${blockedResult ? "Blocked" : statusLabel(terminalStatus)}`
           : "The final answer and supporting files will appear here when the run finishes."}
       </p>
 
@@ -242,6 +257,11 @@ function ResultModal({
   resultPayload: ResultArtifactPayload | null;
 }) {
   const [activeTab, setActiveTab] = useState<ResultTab>("answer");
+  const blockedResult = readBlockedResult(resultPayload);
+  const finalOutput =
+    typeof resultPayload?.result.final_output === "string"
+      ? resultPayload.result.final_output
+      : blockedResult?.message;
 
   useEffect(() => {
     if (open) {
@@ -280,7 +300,7 @@ function ResultModal({
               Operator answer
             </p>
             <div className="mt-4 rounded-xl border border-border bg-[#0d1317] p-5">
-              <MarkdownContent value={resultPayload?.result.final_output} />
+              <MarkdownContent value={finalOutput} />
             </div>
           </section>
         </TabsContent>

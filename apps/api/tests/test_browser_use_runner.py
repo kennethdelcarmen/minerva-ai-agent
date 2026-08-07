@@ -10,6 +10,7 @@ from backend.agent import browser_use_runner as runner_module
 from backend.agent.browser_use_runner import BrowserUseRunner
 from backend.config import Settings
 from backend.contracts.models import EventType
+from backend.agent.jina_fallback import is_bot_blocked
 
 
 class FakeActionResult:
@@ -46,6 +47,9 @@ class FakeBrowserSession:
         self.kwargs = kwargs
         self.browser_state_reads = 0
         self.closed = False
+        self.current_url = "https://example.com/docs"
+        self.current_title = "Docs"
+        self.page_text = "Example documentation page"
         self.__class__.instances.append(self)
 
     async def take_screenshot(self, path: str) -> None:
@@ -56,6 +60,18 @@ class FakeBrowserSession:
     async def get_browser_state_summary(self) -> SimpleNamespace:
         self.browser_state_reads += 1
         return SimpleNamespace(url="https://example.com/docs", title="Docs")
+
+    async def get_current_page_url(self) -> str:
+        return self.current_url
+
+    async def get_current_page_title(self) -> str:
+        return self.current_title
+
+    async def get_current_page(self) -> SimpleNamespace:
+        async def evaluate(_script: str) -> str:
+            return self.page_text
+
+        return SimpleNamespace(evaluate=evaluate)
 
     async def close(self) -> None:
         self.closed = True
@@ -389,3 +405,124 @@ async def test_runner_does_not_retry_non_matching_error(
         await runner.run(FakeContext(tmp_path / "run-no-retry"))
 
     assert ExplodingAgent.run_attempts == 1
+
+
+def test_is_bot_blocked_matches_common_anti_bot_markers() -> None:
+    assert is_bot_blocked("Please complete the CAPTCHA to continue.", "Just a moment...")
+    assert is_bot_blocked("403 Forbidden", "Access Denied")
+    assert is_bot_blocked("Akamai bot detection blocked this request.", "Security Check")
+    assert is_bot_blocked("Cloudflare Ray ID: 1234", "Attention Required")
+    assert is_bot_blocked("Normal product copy with free shipping.", "Example Store") is False
+
+
+class BlockedPageAgent(FakeAgent):
+    observed_fallback_content: list[str] = []
+
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = "https://blocked.example.com/item"
+        session.current_title = "Just a moment..."
+        session.page_text = "Cloudflare bot protection challenge"
+
+        await self.tools.registry.execute_action(action_name="click", params={"description": "Open blocked page"})
+        self.state.n_steps = 1
+        await on_step_end(self)
+
+        assert self.state.last_result is not None
+        self.__class__.observed_fallback_content = [
+            item.extracted_content for item in self.state.last_result if getattr(item, "extracted_content", None)
+        ]
+
+        retry_result = await self.tools.registry.execute_action(action_name="click", params={"description": "Retry blocked"})
+        self.state.last_result = [retry_result]
+        session.current_url = "https://example.com/recovered"
+        session.current_title = "Recovered"
+        session.page_text = "Recovered page"
+        self.state.n_steps = 2
+        self.state.last_model_output = SimpleNamespace(next_goal="Finish the task.", memory="Used fallback content")
+        await on_step_end(self)
+
+        await self.tools.registry.execute_action(
+            action_name="navigate",
+            params={"url": "https://example.com/final", "new_tab": False},
+        )
+        return FakeHistory(steps=2)
+
+
+@pytest.mark.asyncio
+async def test_runner_fetches_jina_fallback_once_and_continues(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    BlockedPageAgent.observed_fallback_content = []
+    monkeypatch.setattr(runner_module, "Agent", BlockedPageAgent)
+
+    fetch_calls: list[str] = []
+
+    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
+        fetch_calls.append(target_url)
+        return "# Fallback markdown\n\nBlocked product details"
+
+    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-jina-fallback")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert fetch_calls == ["https://blocked.example.com/item"]
+    assert BlockedPageAgent.observed_fallback_content == ["# Fallback markdown\n\nBlocked product details"]
+    fallback_event = next(
+        event
+        for event in context.events
+        if event["summary"] == "Anti-bot protection detected. Falling back to Scraper API pipeline..."
+    )
+    assert fallback_event["data"]["provider"] == "jina-reader"
+    blocked_retry_event = next(event for event in context.events if event["summary"] == 'Skipping "click" on blocked page.')
+    assert blocked_retry_event["data"]["url"] == "https://blocked.example.com/item"
+
+
+class BlockedPageFailureAgent(FakeAgent):
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = "https://blocked.example.com/manual"
+        session.current_title = "Attention Required"
+        session.page_text = "CAPTCHA challenge"
+
+        await self.tools.registry.execute_action(action_name="click", params={"description": "Open blocked page"})
+        self.state.n_steps = 1
+        await on_step_end(self)
+        return FakeHistory()
+
+
+@pytest.mark.asyncio
+async def test_runner_returns_structured_blocked_payload_when_jina_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    monkeypatch.setattr(runner_module, "Agent", BlockedPageFailureAgent)
+
+    async def fake_fetch_page_via_reader_api(_target_url: str) -> str:
+        raise RuntimeError("reader unavailable")
+
+    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-jina-fallback-failure")
+
+    result = await runner.run(context)
+
+    assert result == {
+        "success": False,
+        "status": "blocked",
+        "message": "Target page requires manual verification.",
+        "url": "https://blocked.example.com/manual",
+        "final_output": "Target page requires manual verification.",
+    }
+    failure_event = next(event for event in context.events if event["summary"] == "Reader fallback failed after anti-bot detection.")
+    assert failure_event["data"]["url"] == "https://blocked.example.com/manual"

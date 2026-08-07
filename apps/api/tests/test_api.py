@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import time
 from contextlib import contextmanager
@@ -60,6 +61,16 @@ class FakeRunner:
 
         if self.mode == "error":
             raise RuntimeError("fake runner failure")
+
+        if self.mode == "blocked":
+            self.finished.set()
+            return {
+                "success": False,
+                "status": "blocked",
+                "message": "Target page requires manual verification.",
+                "url": "https://blocked.example.com/item",
+                "final_output": "Target page requires manual verification.",
+            }
 
         self.finished.set()
         return {"success": True, "final_output": "done", "steps": 1}
@@ -425,6 +436,28 @@ def test_completed_run_streams_events_from_disk_after_eviction(settings: Setting
 
         assert "event: plan" in body
         assert "event: result" in body
+
+
+def test_result_event_preserves_run_status_and_nests_blocked_payload(settings: Settings) -> None:
+    runner = FakeRunner(mode="blocked")
+    with create_test_client(settings, runner) as client:
+        run_id = client.post("/runs", json={"task": "Recover blocked page"}).json()["run_id"]
+        wait_for_status(client, run_id, "failed")
+
+        with client.stream("GET", f"/runs/{run_id}/events") as response:
+            body = "".join(chunk.decode("utf-8") if isinstance(chunk, bytes) else chunk for chunk in response.iter_raw())
+
+    payloads = [json.loads(line.removeprefix("data: ")) for line in body.splitlines() if line.startswith("data: ")]
+    result_event = next(payload for payload in payloads if payload["type"] == "result")
+
+    assert result_event["data"]["status"] == "failed"
+    assert result_event["data"]["result"] == {
+        "success": False,
+        "status": "blocked",
+        "message": "Target page requires manual verification.",
+        "url": "https://blocked.example.com/item",
+        "final_output": "Target page requires manual verification.",
+    }
 
 
 @pytest.mark.asyncio

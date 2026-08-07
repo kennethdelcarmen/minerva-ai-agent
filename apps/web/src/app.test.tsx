@@ -91,6 +91,23 @@ function createResultPayload(): ResultArtifactPayload {
   };
 }
 
+function createBlockedResultPayload(): ResultArtifactPayload {
+  return {
+    status: createStatus({
+      status: "failed",
+      completed_at: "2026-08-03T10:02:00Z",
+      last_error: "Target page requires manual verification.",
+    }),
+    result: {
+      success: false,
+      status: "blocked",
+      message: "Target page requires manual verification.",
+      url: "https://blocked.example.com/item",
+      final_output: "Target page requires manual verification.",
+    },
+  };
+}
+
 function createModelCatalog() {
   return {
     default_model: "gemini-3.5-flash-lite",
@@ -589,6 +606,36 @@ describe("operator console", () => {
 
     expect(await screen.findByRole("button", { name: "View full answer" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /result.json/i })).toBeInTheDocument();
+  });
+
+  it("renders blocked fallback results without leaving the final answer empty", async () => {
+    installFetchMock((input) => {
+      const url = input.toString();
+
+      if (url.endsWith("/runs/run-123")) {
+        return jsonResponse(createStatus({ status: "failed", completed_at: "2026-08-03T10:02:00Z" }));
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts")) {
+        return jsonResponse({
+          run_id: "run-123",
+          artifacts: [{ kind: "result", path: "result.json", size_bytes: 256 }],
+        });
+      }
+
+      if (url.endsWith("/runs/run-123/artifacts/result.json")) {
+        return jsonResponse(createBlockedResultPayload());
+      }
+
+      throw new Error(`Unhandled request: GET ${url}`);
+    });
+
+    window.history.pushState({}, "", "/runs/run-123");
+    render(<App />);
+
+    const dialog = await screen.findByRole("dialog", { name: "Final answer" });
+    expect(within(dialog).getByText("Target page requires manual verification.")).toBeInTheDocument();
+    expect(await screen.findByText("Final status: Blocked")).toBeInTheDocument();
   });
 
   it("renders long goals in the run summary without truncating the text", async () => {

@@ -7,7 +7,9 @@ from time import perf_counter
 from typing import Any
 
 from browser_use import Agent, BrowserSession
+from browser_use.agent.views import ActionResult
 
+from backend.agent.jina_fallback import JinaFallbackState, fetch_page_via_reader_api, is_bot_blocked
 from backend.agent.policies import should_require_approval
 from backend.agent.service import ManagedRunContext
 from backend.config import Settings
@@ -21,6 +23,15 @@ class BrowserLaunchConfig:
     endpoint_host: str | None
     args: list[str]
     chromium_sandbox: bool | None
+
+
+class ReaderFallbackBlockedError(Exception):
+    """Raised when a blocked page cannot be recovered through Jina Reader."""
+
+    def __init__(self, url: str, message: str = "Target page requires manual verification."):
+        self.url = url
+        self.message = message
+        super().__init__(message)
 
 
 class BrowserUseRunner:
@@ -107,6 +118,92 @@ class BrowserUseRunner:
 
         await close()
 
+    async def _get_current_page_url(self, browser: BrowserSession) -> str | None:
+        try:
+            return await browser.get_current_page_url()
+        except Exception:
+            return None
+
+    async def _get_current_page_snapshot(self, browser: BrowserSession) -> tuple[str | None, str | None, str]:
+        url = await self._get_current_page_url(browser)
+
+        try:
+            title = await browser.get_current_page_title()
+        except Exception:
+            title = None
+
+        page_content = ""
+        try:
+            page = await browser.get_current_page()
+            if page is not None:
+                page_content = await page.evaluate(
+                    """
+                    () => {
+                      const candidates = [
+                        document.body?.innerText,
+                        document.documentElement?.innerText,
+                      ];
+                      for (const candidate of candidates) {
+                        if (typeof candidate === "string" && candidate.trim().length > 0) {
+                          return candidate;
+                        }
+                      }
+                      return "";
+                    }
+                    """
+                )
+        except Exception:
+            page_content = ""
+
+        return url, title, page_content
+
+    def _fallback_action_result(self, *, url: str, markdown: str) -> ActionResult:
+        guidance = (
+            f"Browser interaction hit anti-bot protection on {url}. "
+            "Use the attached Jina Reader markdown as the source material for this page. "
+            "Do not keep retrying blocked actions on this same page. "
+            "Continue browser actions only after navigating to a different reachable page if the task still requires it."
+        )
+        return ActionResult(
+            extracted_content=markdown,
+            include_extracted_content_only_once=True,
+            long_term_memory=guidance,
+        )
+
+    def _fallback_retry_error(self, *, url: str) -> ActionResult:
+        return ActionResult(
+            error=(
+                f"Current page {url} is blocked by anti-bot protection. "
+                "Use the provided Jina Reader fallback content instead of retrying browser actions on this page."
+            ),
+        )
+
+    async def _activate_jina_fallback(
+        self,
+        *,
+        current_agent: Agent,
+        context: ManagedRunContext,
+        fallback_state: JinaFallbackState,
+        url: str,
+    ) -> None:
+        markdown = fallback_state.markdown_by_url.get(url)
+        if markdown is None:
+            await context.emit_event(
+                EventType.OBSERVATION,
+                "Anti-bot protection detected. Falling back to Scraper API pipeline...",
+                {"url": url, "provider": "jina-reader"},
+            )
+            markdown = await fetch_page_via_reader_api(url)
+            fallback_state.markdown_by_url[url] = markdown
+
+        fallback_state.active_blocked_url = url
+        fallback_result = self._fallback_action_result(url=url, markdown=markdown)
+        last_result = getattr(current_agent.state, "last_result", None)
+        if last_result:
+            last_result.append(fallback_result)
+        else:
+            current_agent.state.last_result = [fallback_result]
+
     async def run_preflight(self) -> None:
         preflight_dir = self.settings.artifact_root / "_preflight"
         browser: BrowserSession | None = None
@@ -160,6 +257,7 @@ class BrowserUseRunner:
         agent: Agent | None = None
         history = None
         history_path = context.run_dir / "history.json"
+        fallback_state = JinaFallbackState()
 
         try:
             browser = self._build_browser_session(headless=context.headless, run_dir=context.run_dir)
@@ -176,6 +274,26 @@ class BrowserUseRunner:
 
             async def execute_action_with_approval(*, action_name: str, params: dict, **kwargs):
                 nonlocal action_count, approval_wait_total
+
+                current_url = await self._get_current_page_url(agent.browser_session)
+                blocked_url = fallback_state.active_blocked_url
+                if blocked_url is not None and current_url == blocked_url:
+                    target_url = str(params.get("url", "")).strip()
+                    navigation_allowed = action_name == "navigate" and bool(target_url) and target_url != blocked_url
+                    if action_name != "done" and not navigation_allowed:
+                        result = self._fallback_retry_error(url=blocked_url)
+                        result_payload = result.model_dump(exclude_none=True)
+                        await context.emit_event(
+                            EventType.ERROR,
+                            f'Skipping "{action_name}" on blocked page.',
+                            {
+                                "action_name": action_name,
+                                "params": params,
+                                "result": result_payload,
+                                "url": blocked_url,
+                            },
+                        )
+                        return result
 
                 action_count += 1
                 action_started_at = perf_counter()
@@ -238,6 +356,26 @@ class BrowserUseRunner:
 
                 step_number = current_agent.state.n_steps
                 step_duration = perf_counter() - step_started_at
+                current_url, current_title, page_content = await self._get_current_page_snapshot(current_agent.browser_session)
+                if fallback_state.active_blocked_url is not None and current_url != fallback_state.active_blocked_url:
+                    fallback_state.active_blocked_url = None
+
+                if current_url and is_bot_blocked(page_content, current_title or ""):
+                    try:
+                        await self._activate_jina_fallback(
+                            current_agent=current_agent,
+                            context=context,
+                            fallback_state=fallback_state,
+                            url=current_url,
+                        )
+                    except Exception as exc:
+                        await context.emit_event(
+                            EventType.ERROR,
+                            "Reader fallback failed after anti-bot detection.",
+                            {"url": current_url, "error": self._sanitized_error(exc)},
+                        )
+                        raise ReaderFallbackBlockedError(current_url) from exc
+
                 last_output = current_agent.state.last_model_output
                 if last_output is not None:
                     plan_summary = last_output.next_goal or "Agent completed a step."
@@ -338,6 +476,14 @@ class BrowserUseRunner:
                     "step_screenshot_interval": self.settings.step_screenshot_interval,
                 }
             return result_payload
+        except ReaderFallbackBlockedError as exc:
+            return {
+                "success": False,
+                "status": "blocked",
+                "message": exc.message,
+                "url": exc.url,
+                "final_output": exc.message,
+            }
         finally:
             try:
                 if history is not None and agent is not None and not history_path.exists():

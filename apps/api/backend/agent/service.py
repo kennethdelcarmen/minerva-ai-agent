@@ -209,7 +209,7 @@ class RunService:
                 result_summary,
                 {
                     "status": record.status.value,
-                    **final_payload,
+                    "result": final_payload,
                 },
             )
             self.store.write_result(record.run_dir, self._status_response(record), final_payload)
