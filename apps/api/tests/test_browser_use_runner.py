@@ -10,7 +10,7 @@ from backend.agent import browser_use_runner as runner_module
 from backend.agent.browser_use_runner import BrowserUseRunner
 from backend.config import Settings
 from backend.contracts.models import EventType
-from backend.agent.jina_fallback import is_bot_blocked
+from backend.agent.jina_fallback import is_bot_blocked, is_empty_browser_page
 
 
 class FakeActionResult:
@@ -162,6 +162,12 @@ def patch_runner_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(runner_module, "Agent", FakeAgent)
     monkeypatch.setattr(runner_module, "BrowserSession", FakeBrowserSession)
     monkeypatch.setattr(runner_module, "create_google_llm", lambda **kwargs: SimpleNamespace(**kwargs))
+
+
+def test_empty_browser_page_detector_matches_blank_tabs() -> None:
+    assert is_empty_browser_page("about:blank", "", "")
+    assert is_empty_browser_page("about:blank", "", "Empty Tab")
+    assert is_empty_browser_page("https://example.com", "", "Docs") is False
 
 
 @pytest.mark.asyncio
@@ -589,3 +595,73 @@ async def test_runner_applies_fallback_immediately_after_blocking_action(
     assert fetch_calls == ["https://blocked.example.com/immediate"]
     assert ImmediateBlockedPageAgent.second_action_error is not None
     assert "Use the provided Jina Reader fallback content" in ImmediateBlockedPageAgent.second_action_error
+
+
+class BlankPageAfterActionRegistry:
+    def __init__(self, session: FakeBrowserSession):
+        self._session = session
+
+    async def execute_action(self, *, action_name: str, params: dict, **kwargs) -> FakeActionResult:
+        self._session.current_url = "about:blank"
+        self._session.current_title = ""
+        self._session.page_text = ""
+        return FakeActionResult()
+
+
+class BlankPageAfterActionAgent(FakeAgent):
+    retry_error: str | None = None
+    observed_fallback_content: list[str] = []
+
+    def __init__(self, *, task: str, llm, browser_session: FakeBrowserSession, save_conversation_path: str):
+        super().__init__(task=task, llm=llm, browser_session=browser_session, save_conversation_path=save_conversation_path)
+        self.tools = SimpleNamespace(registry=BlankPageAfterActionRegistry(browser_session))
+
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = "https://www.amazon.com/s?k=toothbrush"
+        session.current_title = "Amazon.com : toothbrush"
+        session.page_text = "Top toothbrush listings"
+
+        await self.tools.registry.execute_action(action_name="click", params={"description": "Open sort menu"})
+        retry_result = await self.tools.registry.execute_action(
+            action_name="click",
+            params={"description": "Retry while browser is blank"},
+        )
+        self.__class__.retry_error = getattr(retry_result, "error", None)
+        self.state.n_steps = 1
+        await on_step_end(self)
+        self.__class__.observed_fallback_content = [
+            item.extracted_content for item in getattr(self.state, "last_result", []) if getattr(item, "extracted_content", None)
+        ]
+        return FakeHistory()
+
+
+@pytest.mark.asyncio
+async def test_runner_falls_back_when_blocked_page_collapses_to_blank_tab(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    BlankPageAfterActionAgent.retry_error = None
+    BlankPageAfterActionAgent.observed_fallback_content = []
+    monkeypatch.setattr(runner_module, "Agent", BlankPageAfterActionAgent)
+
+    fetch_calls: list[str] = []
+
+    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
+        fetch_calls.append(target_url)
+        return "# Amazon fallback"
+
+    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-blank-tab-fallback")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert fetch_calls == ["https://www.amazon.com/s?k=toothbrush"]
+    assert BlankPageAfterActionAgent.retry_error is not None
+    assert "Use the provided Jina Reader fallback content" in BlankPageAfterActionAgent.retry_error
+    assert BlankPageAfterActionAgent.observed_fallback_content == ["# Amazon fallback"]

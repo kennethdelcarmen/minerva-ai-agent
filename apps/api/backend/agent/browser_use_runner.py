@@ -9,7 +9,7 @@ from typing import Any
 from browser_use import Agent, BrowserSession
 from browser_use.agent.views import ActionResult
 
-from backend.agent.jina_fallback import JinaFallbackState, fetch_page_via_reader_api, is_bot_blocked
+from backend.agent.jina_fallback import JinaFallbackState, fetch_page_via_reader_api, is_bot_blocked, is_empty_browser_page
 from backend.agent.policies import should_require_approval
 from backend.agent.service import ManagedRunContext
 from backend.config import Settings
@@ -157,6 +157,41 @@ class BrowserUseRunner:
 
         return url, title, page_content
 
+    def _remember_last_reachable_page(
+        self,
+        fallback_state: JinaFallbackState,
+        *,
+        url: str | None,
+        title: str | None,
+        page_content: str,
+    ) -> None:
+        if not url:
+            return
+        if is_empty_browser_page(url, page_content, title or ""):
+            return
+        if is_bot_blocked(page_content, title or ""):
+            return
+        fallback_state.last_reachable_url = url
+
+    def _resolve_blocked_page_url(
+        self,
+        fallback_state: JinaFallbackState,
+        *,
+        url: str | None,
+        title: str | None,
+        page_content: str,
+        previous_url: str | None = None,
+    ) -> str | None:
+        if url and is_bot_blocked(page_content, title or ""):
+            return url
+
+        if is_empty_browser_page(url, page_content, title or ""):
+            for candidate in (fallback_state.active_blocked_url, previous_url, fallback_state.last_reachable_url):
+                if candidate and candidate != "about:blank":
+                    return candidate
+
+        return None
+
     def _fallback_action_result(self, *, url: str, markdown: str) -> ActionResult:
         guidance = (
             f"Browser interaction hit anti-bot protection on {url}. "
@@ -288,9 +323,13 @@ class BrowserUseRunner:
             async def execute_action_with_approval(*, action_name: str, params: dict, **kwargs):
                 nonlocal action_count, approval_wait_total
 
-                current_url = await self._get_current_page_url(agent.browser_session)
+                current_url, current_title, current_page_content = await self._get_current_page_snapshot(agent.browser_session)
                 blocked_url = fallback_state.active_blocked_url
-                if blocked_url is not None and current_url == blocked_url:
+                still_on_blocked_page = blocked_url is not None and (
+                    current_url == blocked_url
+                    or is_empty_browser_page(current_url, current_page_content, current_title or "")
+                )
+                if still_on_blocked_page:
                     target_url = str(params.get("url", "")).strip()
                     navigation_allowed = action_name == "navigate" and bool(target_url) and target_url != blocked_url
                     if action_name != "done" and not navigation_allowed:
@@ -308,6 +347,12 @@ class BrowserUseRunner:
                         )
                         return result
 
+                self._remember_last_reachable_page(
+                    fallback_state,
+                    url=current_url,
+                    title=current_title,
+                    page_content=current_page_content,
+                )
                 action_count += 1
                 action_started_at = perf_counter()
                 await context.update_summary(f'Preparing "{action_name}" action.')
@@ -339,27 +384,49 @@ class BrowserUseRunner:
                 current_url_after_action, current_title_after_action, page_content_after_action = await self._get_current_page_snapshot(
                     agent.browser_session
                 )
-                if fallback_state.active_blocked_url is not None and current_url_after_action != fallback_state.active_blocked_url:
+                if (
+                    fallback_state.active_blocked_url is not None
+                    and current_url_after_action != fallback_state.active_blocked_url
+                    and not is_empty_browser_page(
+                        current_url_after_action,
+                        page_content_after_action,
+                        current_title_after_action or "",
+                    )
+                ):
                     fallback_state.active_blocked_url = None
 
-                if current_url_after_action and is_bot_blocked(page_content_after_action, current_title_after_action or ""):
+                blocked_page_url = self._resolve_blocked_page_url(
+                    fallback_state,
+                    url=current_url_after_action,
+                    title=current_title_after_action,
+                    page_content=page_content_after_action,
+                    previous_url=current_url,
+                )
+                if blocked_page_url is not None:
                     try:
                         result = await self._get_or_fetch_jina_fallback(
                             current_agent=agent,
                             context=context,
                             fallback_state=fallback_state,
-                            url=current_url_after_action,
+                            url=blocked_page_url,
                         )
                         fallback_applied = True
-                        fallback_url = current_url_after_action
-                        fallback_chars = len(fallback_state.markdown_by_url.get(current_url_after_action, ""))
+                        fallback_url = blocked_page_url
+                        fallback_chars = len(fallback_state.markdown_by_url.get(blocked_page_url, ""))
                     except Exception as exc:
                         await context.emit_event(
                             EventType.ERROR,
                             "Reader fallback failed after anti-bot detection.",
-                            {"url": current_url_after_action, "error": self._sanitized_error(exc)},
+                            {"url": blocked_page_url, "error": self._sanitized_error(exc)},
                         )
-                        raise ReaderFallbackBlockedError(current_url_after_action) from exc
+                        raise ReaderFallbackBlockedError(blocked_page_url) from exc
+                else:
+                    self._remember_last_reachable_page(
+                        fallback_state,
+                        url=current_url_after_action,
+                        title=current_title_after_action,
+                        page_content=page_content_after_action,
+                    )
 
                 action_execution_duration = perf_counter() - action_execution_started_at
                 total_action_duration = perf_counter() - action_started_at
@@ -405,19 +472,29 @@ class BrowserUseRunner:
                 step_number = current_agent.state.n_steps
                 step_duration = perf_counter() - step_started_at
                 current_url, current_title, page_content = await self._get_current_page_snapshot(current_agent.browser_session)
-                if fallback_state.active_blocked_url is not None and current_url != fallback_state.active_blocked_url:
+                if (
+                    fallback_state.active_blocked_url is not None
+                    and current_url != fallback_state.active_blocked_url
+                    and not is_empty_browser_page(current_url, page_content, current_title or "")
+                ):
                     fallback_state.active_blocked_url = None
 
-                if current_url and is_bot_blocked(page_content, current_title or ""):
+                blocked_page_url = self._resolve_blocked_page_url(
+                    fallback_state,
+                    url=current_url,
+                    title=current_title,
+                    page_content=page_content,
+                )
+                if blocked_page_url is not None:
                     try:
                         fallback_result = await self._get_or_fetch_jina_fallback(
                             current_agent=current_agent,
                             context=context,
                             fallback_state=fallback_state,
-                            url=current_url,
+                            url=blocked_page_url,
                         )
                         last_result = getattr(current_agent.state, "last_result", None)
-                        current_markdown = fallback_state.markdown_by_url.get(current_url)
+                        current_markdown = fallback_state.markdown_by_url.get(blocked_page_url)
                         already_injected = bool(
                             last_result
                             and current_markdown is not None
@@ -434,9 +511,16 @@ class BrowserUseRunner:
                         await context.emit_event(
                             EventType.ERROR,
                             "Reader fallback failed after anti-bot detection.",
-                            {"url": current_url, "error": self._sanitized_error(exc)},
+                            {"url": blocked_page_url, "error": self._sanitized_error(exc)},
                         )
-                        raise ReaderFallbackBlockedError(current_url) from exc
+                        raise ReaderFallbackBlockedError(blocked_page_url) from exc
+                else:
+                    self._remember_last_reachable_page(
+                        fallback_state,
+                        url=current_url,
+                        title=current_title,
+                        page_content=page_content,
+                    )
 
                 last_output = current_agent.state.last_model_output
                 if last_output is not None:
