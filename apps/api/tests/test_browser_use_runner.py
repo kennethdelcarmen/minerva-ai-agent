@@ -540,3 +540,52 @@ async def test_runner_returns_structured_blocked_payload_when_jina_fails(
     }
     failure_event = next(event for event in context.events if event["summary"] == "Reader fallback failed after anti-bot detection.")
     assert failure_event["data"]["url"] == "https://blocked.example.com/manual"
+
+
+class ImmediateBlockedPageAgent(FakeAgent):
+    second_action_error: str | None = None
+
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = "https://blocked.example.com/immediate"
+        session.current_title = "Attention Required"
+        session.page_text = "Cloudflare bot detection"
+
+        await self.tools.registry.execute_action(action_name="click", params={"description": "Open blocked page"})
+        second_result = await self.tools.registry.execute_action(
+            action_name="click",
+            params={"description": "Retry while still blocked"},
+        )
+        self.__class__.second_action_error = getattr(second_result, "error", None)
+        self.state.n_steps = 1
+        await on_step_end(self)
+        return FakeHistory()
+
+
+@pytest.mark.asyncio
+async def test_runner_applies_fallback_immediately_after_blocking_action(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    ImmediateBlockedPageAgent.second_action_error = None
+    monkeypatch.setattr(runner_module, "Agent", ImmediateBlockedPageAgent)
+
+    fetch_calls: list[str] = []
+
+    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
+        fetch_calls.append(target_url)
+        return "# Immediate fallback"
+
+    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-jina-immediate")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert fetch_calls == ["https://blocked.example.com/immediate"]
+    assert ImmediateBlockedPageAgent.second_action_error is not None
+    assert "Use the provided Jina Reader fallback content" in ImmediateBlockedPageAgent.second_action_error

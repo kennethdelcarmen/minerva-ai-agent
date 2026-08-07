@@ -186,14 +186,14 @@ class BrowserUseRunner:
             "If the broader task needs additional pages, resume normal browser-use actions only after navigating to a different reachable page."
         )
 
-    async def _activate_jina_fallback(
+    async def _get_or_fetch_jina_fallback(
         self,
         *,
         current_agent: Agent,
         context: ManagedRunContext,
         fallback_state: JinaFallbackState,
         url: str,
-    ) -> None:
+    ) -> ActionResult:
         markdown = fallback_state.markdown_by_url.get(url)
         if markdown is None:
             await context.emit_event(
@@ -206,11 +206,6 @@ class BrowserUseRunner:
 
         fallback_state.active_blocked_url = url
         fallback_result = self._fallback_action_result(url=url, markdown=markdown)
-        last_result = getattr(current_agent.state, "last_result", None)
-        if last_result:
-            last_result.append(fallback_result)
-        else:
-            current_agent.state.last_result = [fallback_result]
 
         if url not in fallback_state.prompted_urls:
             instruction = self._fallback_prompt_instruction(url=url)
@@ -219,6 +214,8 @@ class BrowserUseRunner:
                 message_manager.add_new_task(instruction)
                 current_agent.task = getattr(message_manager, "task", current_agent.task)
             fallback_state.prompted_urls.add(url)
+
+        return fallback_result
 
     async def run_preflight(self) -> None:
         preflight_dir = self.settings.artifact_root / "_preflight"
@@ -336,11 +333,46 @@ class BrowserUseRunner:
 
                 action_execution_started_at = perf_counter()
                 result = await original_execute_action(action_name=action_name, params=params, **kwargs)
+                fallback_applied = False
+                fallback_url: str | None = None
+                fallback_chars = 0
+                current_url_after_action, current_title_after_action, page_content_after_action = await self._get_current_page_snapshot(
+                    agent.browser_session
+                )
+                if fallback_state.active_blocked_url is not None and current_url_after_action != fallback_state.active_blocked_url:
+                    fallback_state.active_blocked_url = None
+
+                if current_url_after_action and is_bot_blocked(page_content_after_action, current_title_after_action or ""):
+                    try:
+                        result = await self._get_or_fetch_jina_fallback(
+                            current_agent=agent,
+                            context=context,
+                            fallback_state=fallback_state,
+                            url=current_url_after_action,
+                        )
+                        fallback_applied = True
+                        fallback_url = current_url_after_action
+                        fallback_chars = len(fallback_state.markdown_by_url.get(current_url_after_action, ""))
+                    except Exception as exc:
+                        await context.emit_event(
+                            EventType.ERROR,
+                            "Reader fallback failed after anti-bot detection.",
+                            {"url": current_url_after_action, "error": self._sanitized_error(exc)},
+                        )
+                        raise ReaderFallbackBlockedError(current_url_after_action) from exc
+
                 action_execution_duration = perf_counter() - action_execution_started_at
                 total_action_duration = perf_counter() - action_started_at
                 result_payload = (
                     result.model_dump(exclude_none=True) if hasattr(result, "model_dump") else {"result": str(result)}
                 )
+                if fallback_applied and fallback_url is not None:
+                    result_payload = {
+                        "status": "fallback_injected",
+                        "source": "jina-reader",
+                        "url": fallback_url,
+                        "content_chars": fallback_chars,
+                    }
                 summary = f'"{action_name}" completed.'
                 event_type = EventType.OBSERVATION
                 if isinstance(result_payload, dict) and result_payload.get("error"):
@@ -378,12 +410,26 @@ class BrowserUseRunner:
 
                 if current_url and is_bot_blocked(page_content, current_title or ""):
                     try:
-                        await self._activate_jina_fallback(
+                        fallback_result = await self._get_or_fetch_jina_fallback(
                             current_agent=current_agent,
                             context=context,
                             fallback_state=fallback_state,
                             url=current_url,
                         )
+                        last_result = getattr(current_agent.state, "last_result", None)
+                        current_markdown = fallback_state.markdown_by_url.get(current_url)
+                        already_injected = bool(
+                            last_result
+                            and current_markdown is not None
+                            and any(
+                                getattr(item, "extracted_content", None) == current_markdown for item in last_result
+                            )
+                        )
+                        if not already_injected:
+                            if last_result:
+                                last_result.append(fallback_result)
+                            else:
+                                current_agent.state.last_result = [fallback_result]
                     except Exception as exc:
                         await context.emit_event(
                             EventType.ERROR,
