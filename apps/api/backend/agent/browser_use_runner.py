@@ -9,7 +9,13 @@ from typing import Any
 from browser_use import Agent, BrowserSession
 from browser_use.agent.views import ActionResult
 
-from backend.agent.jina_fallback import JinaFallbackState, fetch_page_via_reader_api, is_bot_blocked, is_empty_browser_page
+from backend.agent.firecrawl_fallback import (
+    FirecrawlFallbackState,
+    resolve_firecrawl_source_url,
+    is_bot_blocked,
+    is_empty_browser_page,
+    scrape_with_firecrawl,
+)
 from backend.agent.policies import should_require_approval
 from backend.agent.service import ManagedRunContext
 from backend.config import Settings
@@ -25,11 +31,19 @@ class BrowserLaunchConfig:
     chromium_sandbox: bool | None
 
 
-class ReaderFallbackBlockedError(Exception):
-    """Raised when a blocked page cannot be recovered through Jina Reader."""
+@dataclass(frozen=True)
+class FallbackTarget:
+    blocked_url: str
+    source_url: str
 
-    def __init__(self, url: str, message: str = "Target page requires manual verification."):
-        self.url = url
+
+class FirecrawlFallbackBlockedError(Exception):
+    """Raised when a blocked page cannot be recovered through Firecrawl."""
+
+    def __init__(self, blocked_url: str, source_url: str, message: str = "Target page requires manual verification."):
+        self.url = source_url
+        self.blocked_url = blocked_url
+        self.source_url = source_url
         self.message = message
         super().__init__(message)
 
@@ -159,7 +173,7 @@ class BrowserUseRunner:
 
     def _remember_last_reachable_page(
         self,
-        fallback_state: JinaFallbackState,
+        fallback_state: FirecrawlFallbackState,
         *,
         url: str | None,
         title: str | None,
@@ -169,20 +183,20 @@ class BrowserUseRunner:
             return
         if is_empty_browser_page(url, page_content, title or ""):
             return
-        if is_bot_blocked(page_content, title or ""):
+        if is_bot_blocked(url, page_content, title or ""):
             return
         fallback_state.last_reachable_url = url
 
     def _resolve_blocked_page_url(
         self,
-        fallback_state: JinaFallbackState,
+        fallback_state: FirecrawlFallbackState,
         *,
         url: str | None,
         title: str | None,
         page_content: str,
         previous_url: str | None = None,
     ) -> str | None:
-        if url and is_bot_blocked(page_content, title or ""):
+        if url and is_bot_blocked(url, page_content, title or ""):
             return url
 
         if is_empty_browser_page(url, page_content, title or ""):
@@ -192,10 +206,53 @@ class BrowserUseRunner:
 
         return None
 
-    def _fallback_action_result(self, *, url: str, markdown: str) -> ActionResult:
+    @staticmethod
+    def _requested_target_url(action_name: str, params: dict[str, Any]) -> str | None:
+        if action_name != "navigate":
+            return None
+
+        target_url = params.get("url")
+        if not isinstance(target_url, str):
+            return None
+
+        stripped = target_url.strip()
+        return stripped or None
+
+    def _resolve_fallback_target(
+        self,
+        fallback_state: FirecrawlFallbackState,
+        *,
+        url: str | None,
+        title: str | None,
+        page_content: str,
+        requested_url: str | None = None,
+        previous_url: str | None = None,
+    ) -> FallbackTarget | None:
+        blocked_url = self._resolve_blocked_page_url(
+            fallback_state,
+            url=url,
+            title=title,
+            page_content=page_content,
+            previous_url=previous_url,
+        )
+        if blocked_url is None:
+            return None
+
+        source_url = (
+            fallback_state.active_source_url
+            if blocked_url == fallback_state.active_blocked_url and fallback_state.active_source_url and not requested_url
+            else resolve_firecrawl_source_url(
+                blocked_url=blocked_url,
+                requested_url=requested_url,
+                active_source_url=fallback_state.active_source_url,
+            )
+        )
+        return FallbackTarget(blocked_url=blocked_url, source_url=source_url)
+
+    def _fallback_action_result(self, *, blocked_url: str, source_url: str, markdown: str) -> ActionResult:
         guidance = (
-            f"Browser interaction hit anti-bot protection on {url}. "
-            "Use the attached Jina Reader markdown as the source material for this page. "
+            f"Browser interaction hit anti-bot protection on {blocked_url}. "
+            f"Use the attached Firecrawl markdown fetched from {source_url} as the source material and extract any direct deep links from it if needed. "
             "Do not keep retrying blocked actions on this same page. "
             "Continue browser actions only after navigating to a different reachable page if the task still requires it."
         )
@@ -209,46 +266,60 @@ class BrowserUseRunner:
         return ActionResult(
             error=(
                 f"Current page {url} is blocked by anti-bot protection. "
-                "Use the provided Jina Reader fallback content instead of retrying browser actions on this page."
+                "Use the provided Firecrawl fallback content instead of retrying browser actions on this page."
             ),
         )
 
-    def _fallback_prompt_instruction(self, *, url: str) -> str:
+    def _fallback_prompt_instruction_for_target(self, *, blocked_url: str, source_url: str) -> str:
         return (
-            f"The live browser page at {url} is blocked by anti-bot or CAPTCHA protection. "
-            "A Jina Reader fallback for this same page has been attached to your recent observations. "
+            f"The live browser page at {blocked_url} is blocked by anti-bot or CAPTCHA protection. "
+            f"A Firecrawl fallback fetched from the intended target URL {source_url} has been attached to your recent observations. "
             "Use that fallback content for extraction and reasoning on this page instead of retrying blocked interactions. "
             "If the broader task needs additional pages, resume normal browser-use actions only after navigating to a different reachable page."
         )
 
-    async def _get_or_fetch_jina_fallback(
+    async def _get_or_fetch_firecrawl_fallback(
         self,
         *,
         current_agent: Agent,
         context: ManagedRunContext,
-        fallback_state: JinaFallbackState,
-        url: str,
+        fallback_state: FirecrawlFallbackState,
+        blocked_url: str,
+        source_url: str,
     ) -> ActionResult:
-        markdown = fallback_state.markdown_by_url.get(url)
+        if source_url in fallback_state.failed_urls:
+            raise RuntimeError("Firecrawl fallback already failed for this URL.")
+
+        markdown = fallback_state.markdown_by_url.get(source_url)
         if markdown is None:
             await context.emit_event(
                 EventType.OBSERVATION,
-                "Anti-bot protection detected. Falling back to Scraper API pipeline...",
-                {"url": url, "provider": "jina-reader"},
+                "Anti-bot verification wall detected in browser. Triggering Firecrawl API fallback pipeline...",
+                {
+                    "url": source_url,
+                    "blocked_url": blocked_url,
+                    "source_url": source_url,
+                    "provider": "firecrawl",
+                },
             )
-            markdown = await fetch_page_via_reader_api(url)
-            fallback_state.markdown_by_url[url] = markdown
+            try:
+                markdown = await scrape_with_firecrawl(url=source_url, settings=self.settings)
+            except Exception:
+                fallback_state.failed_urls.add(source_url)
+                raise
+            fallback_state.markdown_by_url[source_url] = markdown
 
-        fallback_state.active_blocked_url = url
-        fallback_result = self._fallback_action_result(url=url, markdown=markdown)
+        fallback_state.active_blocked_url = blocked_url
+        fallback_state.active_source_url = source_url
+        fallback_result = self._fallback_action_result(blocked_url=blocked_url, source_url=source_url, markdown=markdown)
 
-        if url not in fallback_state.prompted_urls:
-            instruction = self._fallback_prompt_instruction(url=url)
+        if source_url not in fallback_state.prompted_urls:
+            instruction = self._fallback_prompt_instruction_for_target(blocked_url=blocked_url, source_url=source_url)
             message_manager = getattr(current_agent, "_message_manager", None)
             if message_manager is not None and hasattr(message_manager, "add_new_task"):
                 message_manager.add_new_task(instruction)
                 current_agent.task = getattr(message_manager, "task", current_agent.task)
-            fallback_state.prompted_urls.add(url)
+            fallback_state.prompted_urls.add(source_url)
 
         return fallback_result
 
@@ -305,7 +376,7 @@ class BrowserUseRunner:
         agent: Agent | None = None
         history = None
         history_path = context.run_dir / "history.json"
-        fallback_state = JinaFallbackState()
+        fallback_state = FirecrawlFallbackState()
 
         try:
             browser = self._build_browser_session(headless=context.headless, run_dir=context.run_dir)
@@ -354,6 +425,7 @@ class BrowserUseRunner:
                     page_content=current_page_content,
                 )
                 action_count += 1
+                requested_target_url = self._requested_target_url(action_name, params)
                 action_started_at = perf_counter()
                 await context.update_summary(f'Preparing "{action_name}" action.')
                 await context.emit_event(
@@ -394,32 +466,45 @@ class BrowserUseRunner:
                     )
                 ):
                     fallback_state.active_blocked_url = None
+                    fallback_state.active_source_url = None
 
-                blocked_page_url = self._resolve_blocked_page_url(
+                fallback_target = self._resolve_fallback_target(
                     fallback_state,
                     url=current_url_after_action,
                     title=current_title_after_action,
                     page_content=page_content_after_action,
+                    requested_url=requested_target_url,
                     previous_url=current_url,
                 )
-                if blocked_page_url is not None:
+                if fallback_target is not None:
                     try:
-                        result = await self._get_or_fetch_jina_fallback(
+                        result = await self._get_or_fetch_firecrawl_fallback(
                             current_agent=agent,
                             context=context,
                             fallback_state=fallback_state,
-                            url=blocked_page_url,
+                            blocked_url=fallback_target.blocked_url,
+                            source_url=fallback_target.source_url,
                         )
                         fallback_applied = True
-                        fallback_url = blocked_page_url
-                        fallback_chars = len(fallback_state.markdown_by_url.get(blocked_page_url, ""))
+                        fallback_url = fallback_target.source_url
+                        fallback_chars = len(fallback_state.markdown_by_url.get(fallback_target.source_url, ""))
                     except Exception as exc:
-                        await context.emit_event(
-                            EventType.ERROR,
-                            "Reader fallback failed after anti-bot detection.",
-                            {"url": blocked_page_url, "error": self._sanitized_error(exc)},
-                        )
-                        raise ReaderFallbackBlockedError(blocked_page_url) from exc
+                        if fallback_target.source_url not in fallback_state.reported_failure_urls:
+                            await context.emit_event(
+                                EventType.ERROR,
+                                "Firecrawl fallback failed after anti-bot detection.",
+                                {
+                                    "url": fallback_target.source_url,
+                                    "blocked_url": fallback_target.blocked_url,
+                                    "source_url": fallback_target.source_url,
+                                    "error": self._sanitized_error(exc),
+                                },
+                            )
+                            fallback_state.reported_failure_urls.add(fallback_target.source_url)
+                        raise FirecrawlFallbackBlockedError(
+                            fallback_target.blocked_url,
+                            fallback_target.source_url,
+                        ) from exc
                 else:
                     self._remember_last_reachable_page(
                         fallback_state,
@@ -436,8 +521,10 @@ class BrowserUseRunner:
                 if fallback_applied and fallback_url is not None:
                     result_payload = {
                         "status": "fallback_injected",
-                        "source": "jina-reader",
+                        "source": "firecrawl",
                         "url": fallback_url,
+                        "blocked_url": fallback_state.active_blocked_url,
+                        "source_url": fallback_url,
                         "content_chars": fallback_chars,
                     }
                 summary = f'"{action_name}" completed.'
@@ -478,23 +565,25 @@ class BrowserUseRunner:
                     and not is_empty_browser_page(current_url, page_content, current_title or "")
                 ):
                     fallback_state.active_blocked_url = None
+                    fallback_state.active_source_url = None
 
-                blocked_page_url = self._resolve_blocked_page_url(
+                fallback_target = self._resolve_fallback_target(
                     fallback_state,
                     url=current_url,
                     title=current_title,
                     page_content=page_content,
                 )
-                if blocked_page_url is not None:
+                if fallback_target is not None:
                     try:
-                        fallback_result = await self._get_or_fetch_jina_fallback(
+                        fallback_result = await self._get_or_fetch_firecrawl_fallback(
                             current_agent=current_agent,
                             context=context,
                             fallback_state=fallback_state,
-                            url=blocked_page_url,
+                            blocked_url=fallback_target.blocked_url,
+                            source_url=fallback_target.source_url,
                         )
                         last_result = getattr(current_agent.state, "last_result", None)
-                        current_markdown = fallback_state.markdown_by_url.get(blocked_page_url)
+                        current_markdown = fallback_state.markdown_by_url.get(fallback_target.source_url)
                         already_injected = bool(
                             last_result
                             and current_markdown is not None
@@ -508,12 +597,22 @@ class BrowserUseRunner:
                             else:
                                 current_agent.state.last_result = [fallback_result]
                     except Exception as exc:
-                        await context.emit_event(
-                            EventType.ERROR,
-                            "Reader fallback failed after anti-bot detection.",
-                            {"url": blocked_page_url, "error": self._sanitized_error(exc)},
-                        )
-                        raise ReaderFallbackBlockedError(blocked_page_url) from exc
+                        if fallback_target.source_url not in fallback_state.reported_failure_urls:
+                            await context.emit_event(
+                                EventType.ERROR,
+                                "Firecrawl fallback failed after anti-bot detection.",
+                                {
+                                    "url": fallback_target.source_url,
+                                    "blocked_url": fallback_target.blocked_url,
+                                    "source_url": fallback_target.source_url,
+                                    "error": self._sanitized_error(exc),
+                                },
+                            )
+                            fallback_state.reported_failure_urls.add(fallback_target.source_url)
+                        raise FirecrawlFallbackBlockedError(
+                            fallback_target.blocked_url,
+                            fallback_target.source_url,
+                        ) from exc
                 else:
                     self._remember_last_reachable_page(
                         fallback_state,
@@ -622,12 +721,14 @@ class BrowserUseRunner:
                     "step_screenshot_interval": self.settings.step_screenshot_interval,
                 }
             return result_payload
-        except ReaderFallbackBlockedError as exc:
+        except FirecrawlFallbackBlockedError as exc:
             return {
                 "success": False,
                 "status": "blocked",
                 "message": exc.message,
-                "url": exc.url,
+                "url": exc.source_url,
+                "blocked_url": exc.blocked_url,
+                "source_url": exc.source_url,
                 "final_output": exc.message,
             }
         finally:

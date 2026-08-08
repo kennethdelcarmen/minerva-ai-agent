@@ -15,6 +15,11 @@ def clear_google_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("BROWSER_PROVIDER", raising=False)
     monkeypatch.delenv("BROWSERLESS_HOST", raising=False)
     monkeypatch.delenv("BROWSERLESS_TOKEN", raising=False)
+    monkeypatch.delenv("BROWSER_CONTAINER_MODE", raising=False)
+    monkeypatch.delenv("BROWSER_CHROMIUM_SANDBOX", raising=False)
+    monkeypatch.delenv("BROWSER_LAUNCH_ARGS", raising=False)
+    monkeypatch.delenv("FIRECRAWL_API_KEY", raising=False)
+    monkeypatch.delenv("FIRECRAWL_BASE_URL", raising=False)
 
 
 def test_settings_require_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -185,3 +190,13 @@ def test_redact_sensitive_text_scrubs_browserless_token(monkeypatch: pytest.Monk
     settings = Settings(_env_file=None)
 
     assert settings.redact_sensitive_text("wss://host?token=test-token") == "wss://host?token=[REDACTED]"
+
+
+def test_redact_sensitive_text_scrubs_firecrawl_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("BROWSER_PROVIDER", "local")
+    monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-secret")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redact_sensitive_text("Authorization: Bearer fc-secret") == "Authorization: Bearer [REDACTED]"

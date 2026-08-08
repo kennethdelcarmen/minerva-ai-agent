@@ -45,6 +45,12 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("BROWSERLESS_TOKEN"),
         serialization_alias="BROWSERLESS_TOKEN",
     )
+    firecrawl_api_key: SecretStr | None = Field(
+        default=None,
+        validation_alias=AliasChoices("FIRECRAWL_API_KEY"),
+        serialization_alias="FIRECRAWL_API_KEY",
+    )
+    firecrawl_base_url: str = Field(default="https://api.firecrawl.dev/v2", alias="FIRECRAWL_BASE_URL")
     headless: bool = Field(default=True, alias="HEADLESS")
     artifact_root: Path = Field(default=APP_ROOT / ".runs", alias="ARTIFACT_ROOT")
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
@@ -146,6 +152,11 @@ class Settings(BaseSettings):
             for candidate in {secret, quote(secret, safe="")}:
                 if candidate:
                     redacted = redacted.replace(candidate, "[REDACTED]")
+        firecrawl_api_key = self.firecrawl_api_key
+        if firecrawl_api_key is not None:
+            secret = firecrawl_api_key.get_secret_value()
+            if secret:
+                redacted = redacted.replace(secret, "[REDACTED]")
         return redacted
 
 

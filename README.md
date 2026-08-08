@@ -14,6 +14,7 @@ Minerva is a human-supervised browser agent with a FastAPI backend and a React o
 - Node 24+
 - `GOOGLE_API_KEY`
 - Browserless account and API token for the default browser runtime
+- Firecrawl API key for automatic anti-bot fallback recovery
 
 ## Backend Setup
 
@@ -30,6 +31,7 @@ Create `apps/api/.env`:
 ```bash
 GOOGLE_API_KEY=your-key
 GOOGLE_MODEL=gemini-3.5-flash-lite
+FIRECRAWL_API_KEY=your-firecrawl-key
 BROWSER_PROVIDER=browserless
 BROWSERLESS_HOST=production-sfo.browserless.io
 BROWSERLESS_TOKEN=your-browserless-token
@@ -40,6 +42,7 @@ BROWSER_PREFLIGHT_ON_STARTUP=false
 Notes:
 
 - `apps/api/.env` is ignored by git. Keep the Browserless token there, not in tracked files.
+- Set `FIRECRAWL_API_KEY` if runs should recover from Cloudflare, CAPTCHA, or 403 anti-bot walls by scraping the blocked URL through Firecrawl and feeding the returned markdown back into the agent.
 - Browserless is the default browser provider. The backend builds the CDP URL at runtime from `BROWSERLESS_HOST` and `BROWSERLESS_TOKEN`.
 - To roll back to a local browser, set `BROWSER_PROVIDER=local`, remove the Browserless env vars from your local env file, and restart the API.
 

@@ -8,9 +8,9 @@ from pydantic import SecretStr
 
 from backend.agent import browser_use_runner as runner_module
 from backend.agent.browser_use_runner import BrowserUseRunner
+from backend.agent.firecrawl_fallback import is_bot_blocked, is_empty_browser_page
 from backend.config import Settings
 from backend.contracts.models import EventType
-from backend.agent.jina_fallback import is_bot_blocked, is_empty_browser_page
 
 
 class FakeActionResult:
@@ -423,11 +423,27 @@ async def test_runner_does_not_retry_non_matching_error(
 
 
 def test_is_bot_blocked_matches_common_anti_bot_markers() -> None:
-    assert is_bot_blocked("Please complete the CAPTCHA to continue.", "Just a moment...")
-    assert is_bot_blocked("403 Forbidden", "Access Denied")
-    assert is_bot_blocked("Akamai bot detection blocked this request.", "Security Check")
-    assert is_bot_blocked("Cloudflare Ray ID: 1234", "Attention Required")
-    assert is_bot_blocked("Normal product copy with free shipping.", "Example Store") is False
+    assert is_bot_blocked("https://blocked.example.com/challenge", "Please complete the CAPTCHA to continue.", "Just a moment...")
+    assert is_bot_blocked("https://blocked.example.com/403", "403 Forbidden", "Access Denied")
+    assert is_bot_blocked("https://blocked.example.com", "Akamai bot detection blocked this request.", "Security Check")
+    assert is_bot_blocked("https://blocked.example.com", "Cloudflare Ray ID: 1234", "Attention Required")
+    assert (
+        is_bot_blocked(
+            "https://shopee.ph/verify/traffic/error?home_url=https%3A%2F%2Fshopee.ph",
+            "Page Unavailable\nSorry, something went wrong. Please log in and try again.",
+            "Shopee Philippines | Shop Online",
+        )
+        is True
+    )
+    assert (
+        is_bot_blocked(
+            "https://www.google.com/sorry/index?continue=https://www.google.com/search%3Fq%3Dshopee",
+            "To continue, please verify you are human.",
+            "Google Search",
+        )
+        is True
+    )
+    assert is_bot_blocked("https://example.com/products/toothbrush", "Normal product copy with free shipping.", "Example Store") is False
 
 
 class BlockedPageAgent(FakeAgent):
@@ -466,8 +482,60 @@ class BlockedPageAgent(FakeAgent):
         return FakeHistory(steps=2)
 
 
+class ShopeeTrafficErrorAgent(FakeAgent):
+    second_action_error: str | None = None
+    observed_fallback_content: list[str] = []
+
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = "https://shopee.ph/verify/traffic/error?home_url=https%3A%2F%2Fshopee.ph&is_logged_in=false"
+        session.current_title = "Shopee Philippines | Shop Online"
+        session.page_text = (
+            "Page Unavailable\n"
+            "Sorry, something went wrong. Please log in and try again, or you can go back to Home Page.\n"
+            "Back to Home Page"
+        )
+
+        await self.tools.registry.execute_action(action_name="navigate", params={"url": "https://shopee.ph/search?keyword=toothbrush"})
+        blocked_retry = await self.tools.registry.execute_action(
+            action_name="click",
+            params={"description": "Retry while Shopee traffic page is visible"},
+        )
+        self.__class__.second_action_error = getattr(blocked_retry, "error", None)
+        self.state.n_steps = 1
+        await on_step_end(self)
+        self.__class__.observed_fallback_content = [
+            item.extracted_content for item in getattr(self.state, "last_result", []) if getattr(item, "extracted_content", None)
+        ]
+        return FakeHistory()
+
+
+class GoogleSorryPageAgent(FakeAgent):
+    observed_fallback_content: list[str] = []
+
+    async def run(self, *, max_steps: int, on_step_end) -> FakeHistory:
+        session = self.browser_session
+        session.current_url = (
+            "https://www.google.com/sorry/index?"
+            "continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3Dbest%2Btoothbrush%2Blazada"
+        )
+        session.current_title = "https://www.google.com/search?q=best+toothbrush+lazada"
+        session.page_text = "To continue, please verify you are human."
+
+        await self.tools.registry.execute_action(
+            action_name="click",
+            params={"description": "Retry while Google sorry page is visible"},
+        )
+        self.state.n_steps = 1
+        await on_step_end(self)
+        self.__class__.observed_fallback_content = [
+            item.extracted_content for item in getattr(self.state, "last_result", []) if getattr(item, "extracted_content", None)
+        ]
+        return FakeHistory()
+
+
 @pytest.mark.asyncio
-async def test_runner_fetches_jina_fallback_once_and_continues(
+async def test_runner_fetches_firecrawl_fallback_once_and_continues(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     base_settings: Settings,
@@ -479,30 +547,113 @@ async def test_runner_fetches_jina_fallback_once_and_continues(
 
     fetch_calls: list[str] = []
 
-    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
-        fetch_calls.append(target_url)
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert settings is base_settings
+        fetch_calls.append(url)
         return "# Fallback markdown\n\nBlocked product details"
 
-    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
 
     runner = BrowserUseRunner(base_settings)
-    context = FakeContext(tmp_path / "run-jina-fallback")
+    context = FakeContext(tmp_path / "run-firecrawl-fallback")
 
     result = await runner.run(context)
 
     assert result["success"] is True
     assert fetch_calls == ["https://blocked.example.com/item"]
     assert BlockedPageAgent.observed_fallback_content == ["# Fallback markdown\n\nBlocked product details"]
-    assert "Jina Reader fallback" in BlockedPageAgent.observed_fallback_task
+    assert "Firecrawl fallback" in BlockedPageAgent.observed_fallback_task
     assert "https://blocked.example.com/item" in BlockedPageAgent.observed_fallback_task
     fallback_event = next(
         event
         for event in context.events
-        if event["summary"] == "Anti-bot protection detected. Falling back to Scraper API pipeline..."
+        if event["summary"] == "Anti-bot verification wall detected in browser. Triggering Firecrawl API fallback pipeline..."
     )
-    assert fallback_event["data"]["provider"] == "jina-reader"
+    assert fallback_event["data"]["provider"] == "firecrawl"
     blocked_retry_event = next(event for event in context.events if event["summary"] == 'Skipping "click" on blocked page.')
     assert blocked_retry_event["data"]["url"] == "https://blocked.example.com/item"
+
+
+@pytest.mark.asyncio
+async def test_runner_detects_shopee_traffic_error_and_triggers_firecrawl_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    ShopeeTrafficErrorAgent.second_action_error = None
+    ShopeeTrafficErrorAgent.observed_fallback_content = []
+    monkeypatch.setattr(runner_module, "Agent", ShopeeTrafficErrorAgent)
+
+    fetch_calls: list[str] = []
+
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert settings is base_settings
+        fetch_calls.append(url)
+        return "# Shopee fallback\n\nTop toothbrush listing links"
+
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-shopee-traffic-fallback")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert fetch_calls == ["https://shopee.ph/search?keyword=toothbrush"]
+    assert ShopeeTrafficErrorAgent.second_action_error is not None
+    assert "Use the provided Firecrawl fallback content" in ShopeeTrafficErrorAgent.second_action_error
+    assert ShopeeTrafficErrorAgent.observed_fallback_content == ["# Shopee fallback\n\nTop toothbrush listing links"]
+    fallback_event = next(
+        event
+        for event in context.events
+        if event["summary"] == "Anti-bot verification wall detected in browser. Triggering Firecrawl API fallback pipeline..."
+    )
+    assert fallback_event["data"]["url"] == "https://shopee.ph/search?keyword=toothbrush"
+    assert fallback_event["data"]["blocked_url"] == "https://shopee.ph/verify/traffic/error?home_url=https%3A%2F%2Fshopee.ph&is_logged_in=false"
+    assert fallback_event["data"]["source_url"] == "https://shopee.ph/search?keyword=toothbrush"
+    blocked_retry_event = next(event for event in context.events if event["summary"] == 'Skipping "click" on blocked page.')
+    assert blocked_retry_event["data"]["url"] == "https://shopee.ph/verify/traffic/error?home_url=https%3A%2F%2Fshopee.ph&is_logged_in=false"
+
+
+@pytest.mark.asyncio
+async def test_runner_uses_embedded_google_continue_url_as_firecrawl_source(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    base_settings: Settings,
+) -> None:
+    patch_runner_dependencies(monkeypatch)
+    GoogleSorryPageAgent.observed_fallback_content = []
+    monkeypatch.setattr(runner_module, "Agent", GoogleSorryPageAgent)
+
+    fetch_calls: list[str] = []
+
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert settings is base_settings
+        fetch_calls.append(url)
+        return "# Google fallback\n\nSearch results for best toothbrush lazada"
+
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
+
+    runner = BrowserUseRunner(base_settings)
+    context = FakeContext(tmp_path / "run-google-sorry-fallback")
+
+    result = await runner.run(context)
+
+    assert result["success"] is True
+    assert fetch_calls == ["https://www.google.com/search?q=best+toothbrush+lazada"]
+    assert GoogleSorryPageAgent.observed_fallback_content == ["# Google fallback\n\nSearch results for best toothbrush lazada"]
+    fallback_event = next(
+        event
+        for event in context.events
+        if event["summary"] == "Anti-bot verification wall detected in browser. Triggering Firecrawl API fallback pipeline..."
+    )
+    assert fallback_event["data"]["url"] == "https://www.google.com/search?q=best+toothbrush+lazada"
+    assert (
+        fallback_event["data"]["blocked_url"]
+        == "https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch%3Fq%3Dbest%2Btoothbrush%2Blazada"
+    )
+    assert fallback_event["data"]["source_url"] == "https://www.google.com/search?q=best+toothbrush+lazada"
 
 
 class BlockedPageFailureAgent(FakeAgent):
@@ -519,21 +670,25 @@ class BlockedPageFailureAgent(FakeAgent):
 
 
 @pytest.mark.asyncio
-async def test_runner_returns_structured_blocked_payload_when_jina_fails(
+async def test_runner_returns_structured_blocked_payload_when_firecrawl_fails(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     base_settings: Settings,
 ) -> None:
     patch_runner_dependencies(monkeypatch)
     monkeypatch.setattr(runner_module, "Agent", BlockedPageFailureAgent)
+    fetch_calls: list[str] = []
 
-    async def fake_fetch_page_via_reader_api(_target_url: str) -> str:
-        raise RuntimeError("reader unavailable")
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert url == "https://blocked.example.com/manual"
+        assert settings is base_settings
+        fetch_calls.append(url)
+        raise RuntimeError("firecrawl unavailable")
 
-    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
 
     runner = BrowserUseRunner(base_settings)
-    context = FakeContext(tmp_path / "run-jina-fallback-failure")
+    context = FakeContext(tmp_path / "run-firecrawl-fallback-failure")
 
     result = await runner.run(context)
 
@@ -542,10 +697,18 @@ async def test_runner_returns_structured_blocked_payload_when_jina_fails(
         "status": "blocked",
         "message": "Target page requires manual verification.",
         "url": "https://blocked.example.com/manual",
+        "blocked_url": "https://blocked.example.com/manual",
+        "source_url": "https://blocked.example.com/manual",
         "final_output": "Target page requires manual verification.",
     }
-    failure_event = next(event for event in context.events if event["summary"] == "Reader fallback failed after anti-bot detection.")
-    assert failure_event["data"]["url"] == "https://blocked.example.com/manual"
+    assert fetch_calls == ["https://blocked.example.com/manual"]
+    failure_events = [
+        event for event in context.events if event["summary"] == "Firecrawl fallback failed after anti-bot detection."
+    ]
+    assert len(failure_events) == 1
+    assert failure_events[0]["data"]["url"] == "https://blocked.example.com/manual"
+    assert failure_events[0]["data"]["blocked_url"] == "https://blocked.example.com/manual"
+    assert failure_events[0]["data"]["source_url"] == "https://blocked.example.com/manual"
 
 
 class ImmediateBlockedPageAgent(FakeAgent):
@@ -580,21 +743,22 @@ async def test_runner_applies_fallback_immediately_after_blocking_action(
 
     fetch_calls: list[str] = []
 
-    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
-        fetch_calls.append(target_url)
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert settings is base_settings
+        fetch_calls.append(url)
         return "# Immediate fallback"
 
-    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
 
     runner = BrowserUseRunner(base_settings)
-    context = FakeContext(tmp_path / "run-jina-immediate")
+    context = FakeContext(tmp_path / "run-firecrawl-immediate")
 
     result = await runner.run(context)
 
     assert result["success"] is True
     assert fetch_calls == ["https://blocked.example.com/immediate"]
     assert ImmediateBlockedPageAgent.second_action_error is not None
-    assert "Use the provided Jina Reader fallback content" in ImmediateBlockedPageAgent.second_action_error
+    assert "Use the provided Firecrawl fallback content" in ImmediateBlockedPageAgent.second_action_error
 
 
 class BlankPageAfterActionRegistry:
@@ -649,11 +813,12 @@ async def test_runner_falls_back_when_blocked_page_collapses_to_blank_tab(
 
     fetch_calls: list[str] = []
 
-    async def fake_fetch_page_via_reader_api(target_url: str) -> str:
-        fetch_calls.append(target_url)
+    async def fake_scrape_with_firecrawl(*, url: str, settings: Settings) -> str:
+        assert settings is base_settings
+        fetch_calls.append(url)
         return "# Amazon fallback"
 
-    monkeypatch.setattr(runner_module, "fetch_page_via_reader_api", fake_fetch_page_via_reader_api)
+    monkeypatch.setattr(runner_module, "scrape_with_firecrawl", fake_scrape_with_firecrawl)
 
     runner = BrowserUseRunner(base_settings)
     context = FakeContext(tmp_path / "run-blank-tab-fallback")
@@ -663,5 +828,5 @@ async def test_runner_falls_back_when_blocked_page_collapses_to_blank_tab(
     assert result["success"] is True
     assert fetch_calls == ["https://www.amazon.com/s?k=toothbrush"]
     assert BlankPageAfterActionAgent.retry_error is not None
-    assert "Use the provided Jina Reader fallback content" in BlankPageAfterActionAgent.retry_error
+    assert "Use the provided Firecrawl fallback content" in BlankPageAfterActionAgent.retry_error
     assert BlankPageAfterActionAgent.observed_fallback_content == ["# Amazon fallback"]
