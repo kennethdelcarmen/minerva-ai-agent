@@ -75,7 +75,7 @@ export function LauncherCard({
               name="task"
               value={task}
               onChange={(event) => setTask(event.target.value)}
-              placeholder="Book a return flight to Tokyo next month and stop before payment."
+              placeholder="Research 3 project management tools and compare features, pricing tiers, and free-trial limits."
               className="min-h-44 rounded-xl border-border bg-[#0d1317] px-4 py-3.5 text-[0.95rem] leading-7"
               required
             />
