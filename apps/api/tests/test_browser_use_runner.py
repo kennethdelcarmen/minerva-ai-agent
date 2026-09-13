@@ -120,7 +120,7 @@ class FakeContext:
     def __init__(self, run_dir: Path):
         self.run_id = "run-123"
         self.request = SimpleNamespace(task="Open the docs")
-        self.model = "gemini-3.5-flash-lite"
+        self.model = "openrouter/free"
         self.headless = True
         self.run_dir = run_dir
         self.run_dir.mkdir(parents=True, exist_ok=True)
@@ -150,9 +150,10 @@ class FakeContext:
 @pytest.fixture
 def base_settings(tmp_path: Path) -> Settings:
     return Settings(
-        GOOGLE_API_KEY="test-key",
+        _env_file=None,
+        OPENROUTER_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
-        GOOGLE_MODEL="gemini-3.5-flash-lite",
+        OPENROUTER_MODEL="openrouter/free",
         BROWSER_PROVIDER="local",
     )
 
@@ -161,7 +162,7 @@ def patch_runner_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     FakeBrowserSession.instances = []
     monkeypatch.setattr(runner_module, "Agent", FakeAgent)
     monkeypatch.setattr(runner_module, "BrowserSession", FakeBrowserSession)
-    monkeypatch.setattr(runner_module, "create_google_llm", lambda **kwargs: SimpleNamespace(**kwargs))
+    monkeypatch.setattr(runner_module, "create_openrouter_llm", lambda **kwargs: SimpleNamespace(**kwargs))
 
 
 def test_empty_browser_page_detector_matches_blank_tabs() -> None:
@@ -340,7 +341,7 @@ async def test_runner_uses_browserless_cdp_session_when_provider_is_browserless(
 
 
 @pytest.mark.asyncio
-async def test_runner_builds_google_llm_with_selected_model(
+async def test_runner_builds_openrouter_llm_with_selected_model(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     base_settings: Settings,
@@ -348,18 +349,18 @@ async def test_runner_builds_google_llm_with_selected_model(
     patch_runner_dependencies(monkeypatch)
     captured_kwargs: dict[str, object] = {}
 
-    def fake_create_google_llm(**kwargs):
+    def fake_create_openrouter_llm(**kwargs):
         captured_kwargs.update(kwargs)
         return SimpleNamespace(**kwargs)
 
-    monkeypatch.setattr(runner_module, "create_google_llm", fake_create_google_llm)
+    monkeypatch.setattr(runner_module, "create_openrouter_llm", fake_create_openrouter_llm)
     runner = BrowserUseRunner(base_settings)
     context = FakeContext(tmp_path / "run-llm")
-    context.model = "gemini-3.6-flash"
+    context.model = "openrouter/free"
 
     await runner.run(context)
 
-    assert captured_kwargs["model"] == "gemini-3.6-flash"
+    assert captured_kwargs["model"] == "openrouter/free"
     assert captured_kwargs["settings"] is base_settings
 
 

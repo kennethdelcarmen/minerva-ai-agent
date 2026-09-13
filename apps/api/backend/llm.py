@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from browser_use import ChatGoogle
+from browser_use.llm import ChatOpenRouter
 
 from backend.config import Settings
 
 
-def create_google_llm(*, model: str, settings: Settings) -> ChatGoogle:
-    """Create a Google AI Studio-backed browser-use chat client."""
+def create_openrouter_llm(*, model: str, settings: Settings) -> ChatOpenRouter:
+    """Create an OpenRouter-backed browser-use chat client."""
 
-    return ChatGoogle(
+    return ChatOpenRouter(
         model=model,
-        api_key=settings.google_api_key.get_secret_value(),
+        api_key=settings.openrouter_api_key.get_secret_value(),
     )

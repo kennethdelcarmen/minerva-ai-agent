@@ -144,7 +144,7 @@ class RunService:
         record = RunRecord(
             id=run_id,
             request=request,
-            model=request.model or self.settings.google_model,
+            model=request.model or self.settings.openrouter_model,
             headless=self.settings.headless,
             status=RunStatus.PENDING,
             run_dir=self.store.create_run_dir(run_id),

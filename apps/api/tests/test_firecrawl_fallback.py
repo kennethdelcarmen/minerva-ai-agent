@@ -98,7 +98,8 @@ async def test_scrape_with_firecrawl_retries_with_relaxed_payload_and_uses_html_
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     settings = Settings(
-        GOOGLE_API_KEY="test-key",
+        _env_file=None,
+        OPENROUTER_API_KEY="test-key",
         BROWSER_PROVIDER="local",
         FIRECRAWL_API_KEY="fc-test-key",
     )

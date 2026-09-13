@@ -9,9 +9,9 @@ from backend.config import Settings
 
 
 @pytest.fixture(autouse=True)
-def clear_google_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    monkeypatch.delenv("GOOGLE_MODEL", raising=False)
+def clear_openrouter_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("OPENROUTER_MODEL", raising=False)
     monkeypatch.delenv("BROWSER_PROVIDER", raising=False)
     monkeypatch.delenv("BROWSERLESS_HOST", raising=False)
     monkeypatch.delenv("BROWSERLESS_TOKEN", raising=False)
@@ -22,16 +22,24 @@ def clear_google_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("FIRECRAWL_BASE_URL", raising=False)
 
 
-def test_settings_require_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+def test_settings_require_openrouter_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
 
-    with pytest.raises(ValidationError, match="GOOGLE_API_KEY environment variable is not set."):
+    with pytest.raises(ValidationError, match="OPENROUTER_API_KEY environment variable is not set."):
+        Settings(_env_file=None)
+
+
+def test_settings_do_not_accept_legacy_google_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("GOOGLE_API_KEY", "legacy-test-key")
+    monkeypatch.setenv("BROWSER_PROVIDER", "local")
+
+    with pytest.raises(ValidationError, match="OPENROUTER_API_KEY environment variable is not set."):
         Settings(_env_file=None)
 
 
 def test_settings_default_to_browserless_when_token_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSERLESS_TOKEN", "test-token")
 
     settings = Settings(_env_file=None)
@@ -41,7 +49,7 @@ def test_settings_default_to_browserless_when_token_is_set(monkeypatch: pytest.M
 
 
 def test_settings_require_browserless_token_in_browserless_mode(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
     with pytest.raises(
         ValidationError,
@@ -51,7 +59,7 @@ def test_settings_require_browserless_token_in_browserless_mode(monkeypatch: pyt
 
 
 def test_settings_accept_json_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", '["https://app.example.com","https://admin.example.com"]')
 
@@ -61,7 +69,7 @@ def test_settings_accept_json_cors_origins(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("CORS_ALLOW_ORIGINS", "https://app.example.com, https://admin.example.com")
 
@@ -71,7 +79,7 @@ def test_settings_accept_csv_cors_origins(monkeypatch: pytest.MonkeyPatch) -> No
 
 
 def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.delenv("HEADLESS", raising=False)
 
@@ -81,20 +89,20 @@ def test_headless_defaults_to_true(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_speed_defaults_enable_timings_and_per_step_screenshots(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
 
     settings = Settings(_env_file=None)
 
     assert settings.enable_step_timings is True
-    assert settings.google_model == "gemini-3.5-flash-lite"
+    assert settings.openrouter_model == "openrouter/free"
     assert settings.step_screenshot_interval == 1
     assert settings.include_step_browser_state is False
     assert settings.approval_mode == "speed"
 
 
 def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("ENABLE_STEP_TIMINGS", "false")
     monkeypatch.setenv("STEP_SCREENSHOT_INTERVAL", "0")
@@ -110,7 +118,7 @@ def test_settings_accept_explicit_speed_controls(monkeypatch: pytest.MonkeyPatch
 
 
 def test_settings_accept_browser_launch_args_json(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--foo=bar","--disable-dev-shm-usage"]')
 
@@ -120,7 +128,7 @@ def test_settings_accept_browser_launch_args_json(monkeypatch: pytest.MonkeyPatc
 
 
 def test_settings_reject_non_array_browser_launch_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '{"flag":"--foo"}')
 
@@ -129,7 +137,7 @@ def test_settings_reject_non_array_browser_launch_args(monkeypatch: pytest.Monke
 
 
 def test_container_mode_defaults_disable_sandbox_and_add_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
 
@@ -140,7 +148,7 @@ def test_container_mode_defaults_disable_sandbox_and_add_container_args(monkeypa
 
 
 def test_local_mode_defaults_keep_sandbox_and_skip_container_args(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
 
     settings = Settings(_env_file=None)
@@ -151,7 +159,7 @@ def test_local_mode_defaults_keep_sandbox_and_skip_container_args(monkeypatch: p
 
 
 def test_user_browser_launch_args_override_default_flags(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("BROWSER_CONTAINER_MODE", "true")
     monkeypatch.setenv("BROWSER_LAUNCH_ARGS", '["--no-sandbox=false","--disable-dev-shm-usage=false","--foo=bar"]')
@@ -165,17 +173,17 @@ def test_user_browser_launch_args_override_default_flags(monkeypatch: pytest.Mon
     ]
 
 
-def test_settings_reject_unsupported_google_model(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+def test_settings_reject_unsupported_openrouter_model(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
-    monkeypatch.setenv("GOOGLE_MODEL", "gpt-5")
+    monkeypatch.setenv("OPENROUTER_MODEL", "gpt-5")
 
-    with pytest.raises(ValidationError, match="GOOGLE_MODEL must be one of:"):
+    with pytest.raises(ValidationError, match="OPENROUTER_MODEL must be one of:"):
         Settings(_env_file=None)
 
 
 def test_browserless_cdp_url_is_composed_from_host_and_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSERLESS_TOKEN", "test-token")
 
     settings = Settings(_env_file=None)
@@ -184,7 +192,7 @@ def test_browserless_cdp_url_is_composed_from_host_and_token(monkeypatch: pytest
 
 
 def test_redact_sensitive_text_scrubs_browserless_token(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSERLESS_TOKEN", "test-token")
 
     settings = Settings(_env_file=None)
@@ -193,10 +201,19 @@ def test_redact_sensitive_text_scrubs_browserless_token(monkeypatch: pytest.Monk
 
 
 def test_redact_sensitive_text_scrubs_firecrawl_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("GOOGLE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
     monkeypatch.setenv("BROWSER_PROVIDER", "local")
     monkeypatch.setenv("FIRECRAWL_API_KEY", "fc-secret")
 
     settings = Settings(_env_file=None)
 
     assert settings.redact_sensitive_text("Authorization: Bearer fc-secret") == "Authorization: Bearer [REDACTED]"
+
+
+def test_redact_sensitive_text_scrubs_openrouter_key(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "or-secret")
+    monkeypatch.setenv("BROWSER_PROVIDER", "local")
+
+    settings = Settings(_env_file=None)
+
+    assert settings.redact_sensitive_text("Authorization: Bearer or-secret") == "Authorization: Bearer [REDACTED]"

@@ -12,7 +12,7 @@ services:
       BROWSER_CONTAINER_MODE: "true"
       BROWSER_PREFLIGHT_ON_STARTUP: "true"
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     volumes:
       - ./apps/api/.runs:/app/.runs
     healthcheck:

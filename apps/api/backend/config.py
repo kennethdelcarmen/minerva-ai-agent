@@ -13,7 +13,7 @@ from urllib.parse import quote
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
-from backend.model_catalog import DEFAULT_GOOGLE_MODEL, SUPPORTED_GOOGLE_MODELS, is_supported_google_model
+from backend.model_catalog import DEFAULT_OPENROUTER_MODEL, SUPPORTED_OPENROUTER_MODELS, is_supported_openrouter_model
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 
@@ -28,15 +28,15 @@ class Settings(BaseSettings):
         validate_default=True,
     )
 
-    google_api_key: SecretStr | None = Field(
+    openrouter_api_key: SecretStr | None = Field(
         default=None,
-        validation_alias=AliasChoices("GOOGLE_API_KEY"),
-        serialization_alias="GOOGLE_API_KEY",
+        validation_alias=AliasChoices("OPENROUTER_API_KEY"),
+        serialization_alias="OPENROUTER_API_KEY",
     )
-    google_model: str = Field(
-        default=DEFAULT_GOOGLE_MODEL,
-        validation_alias=AliasChoices("GOOGLE_MODEL"),
-        serialization_alias="GOOGLE_MODEL",
+    openrouter_model: str = Field(
+        default=DEFAULT_OPENROUTER_MODEL,
+        validation_alias=AliasChoices("OPENROUTER_MODEL"),
+        serialization_alias="OPENROUTER_MODEL",
     )
     browser_provider: Literal["browserless", "local"] = Field(default="browserless", alias="BROWSER_PROVIDER")
     browserless_host: str = Field(default="production-sfo.browserless.io", alias="BROWSERLESS_HOST")
@@ -103,18 +103,18 @@ class Settings(BaseSettings):
             raise ValueError("BROWSER_LAUNCH_ARGS must be a JSON array of strings.")
         return decoded
 
-    @field_validator("google_model")
+    @field_validator("openrouter_model")
     @classmethod
-    def validate_google_model(cls, value: str) -> str:
-        if not is_supported_google_model(value):
-            supported_models = ", ".join(sorted(SUPPORTED_GOOGLE_MODELS))
-            raise ValueError(f"GOOGLE_MODEL must be one of: {supported_models}.")
+    def validate_openrouter_model(cls, value: str) -> str:
+        if not is_supported_openrouter_model(value):
+            supported_models = ", ".join(sorted(SUPPORTED_OPENROUTER_MODELS))
+            raise ValueError(f"OPENROUTER_MODEL must be one of: {supported_models}.")
         return value
 
     @model_validator(mode="after")
-    def validate_google_api_key(self) -> Settings:
-        if self.google_api_key is None:
-            raise ValueError("GOOGLE_API_KEY environment variable is not set.")
+    def validate_openrouter_api_key(self) -> Settings:
+        if self.openrouter_api_key is None:
+            raise ValueError("OPENROUTER_API_KEY environment variable is not set.")
         if self.browser_provider == "browserless" and self.browserless_token is None:
             raise ValueError("BROWSERLESS_TOKEN environment variable is not set when BROWSER_PROVIDER=browserless.")
         return self
@@ -146,17 +146,13 @@ class Settings(BaseSettings):
 
     def redact_sensitive_text(self, text: str) -> str:
         redacted = text
-        token = self.browserless_token
-        if token is not None:
-            secret = token.get_secret_value()
+        for secret_value in (self.openrouter_api_key, self.browserless_token, self.firecrawl_api_key):
+            if secret_value is None:
+                continue
+            secret = secret_value.get_secret_value()
             for candidate in {secret, quote(secret, safe="")}:
                 if candidate:
                     redacted = redacted.replace(candidate, "[REDACTED]")
-        firecrawl_api_key = self.firecrawl_api_key
-        if firecrawl_api_key is not None:
-            secret = firecrawl_api_key.get_secret_value()
-            if secret:
-                redacted = redacted.replace(secret, "[REDACTED]")
         return redacted
 
 

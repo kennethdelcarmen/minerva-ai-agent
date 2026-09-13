@@ -10,7 +10,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, field_validator
 
-from backend.model_catalog import DEFAULT_GOOGLE_MODEL, GOOGLE_MODEL_OPTIONS, is_supported_google_model
+from backend.model_catalog import DEFAULT_OPENROUTER_MODEL, OPENROUTER_MODEL_OPTIONS, is_supported_openrouter_model
 
 
 def utc_now() -> datetime:
@@ -44,7 +44,7 @@ class ApprovalDecision(str, Enum):
 
 class CreateRunRequest(BaseModel):
     task: str = Field(min_length=1, description="Natural-language browser task.")
-    model: str | None = Field(default=None, description="Optional Google AI Studio model override.")
+    model: str | None = Field(default=None, description="Optional OpenRouter model override.")
 
     @field_validator("model")
     @classmethod
@@ -52,8 +52,8 @@ class CreateRunRequest(BaseModel):
         if value is None:
             return value
 
-        if not is_supported_google_model(value):
-            supported_models = ", ".join(option.id for option in GOOGLE_MODEL_OPTIONS)
+        if not is_supported_openrouter_model(value):
+            supported_models = ", ".join(option.id for option in OPENROUTER_MODEL_OPTIONS)
             raise ValueError(f"model must be one of: {supported_models}")
         return value
 
@@ -77,7 +77,7 @@ class ModelOptionResponse(BaseModel):
 
 
 class ModelCatalogResponse(BaseModel):
-    default_model: str = Field(default=DEFAULT_GOOGLE_MODEL)
+    default_model: str = Field(default=DEFAULT_OPENROUTER_MODEL)
     models: list[ModelOptionResponse]
 
 

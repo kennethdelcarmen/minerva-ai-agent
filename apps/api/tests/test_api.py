@@ -13,8 +13,35 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
-os.environ.setdefault("GOOGLE_API_KEY", "test-key")
-os.environ.setdefault("GOOGLE_MODEL", "gemini-3.5-flash-lite")
+# Keep module-level app construction independent of a developer's ignored .env.
+for _settings_env_name in (
+    "OPENROUTER_API_KEY",
+    "OPENROUTER_MODEL",
+    "BROWSER_PROVIDER",
+    "BROWSERLESS_HOST",
+    "BROWSERLESS_TOKEN",
+    "FIRECRAWL_API_KEY",
+    "FIRECRAWL_BASE_URL",
+    "HEADLESS",
+    "ARTIFACT_ROOT",
+    "LOG_LEVEL",
+    "MAX_STEPS",
+    "EVENT_SUBSCRIBER_QUEUE_SIZE",
+    "ENABLE_STEP_TIMINGS",
+    "STEP_SCREENSHOT_INTERVAL",
+    "INCLUDE_STEP_BROWSER_STATE",
+    "APPROVAL_MODE",
+    "BROWSER_CONTAINER_MODE",
+    "BROWSER_PREFLIGHT_ON_STARTUP",
+    "BROWSER_LAUNCH_ARGS",
+    "BROWSER_CHROMIUM_SANDBOX",
+    "BROWSER_STARTUP_RETRY_COUNT",
+    "CORS_ALLOW_ORIGINS",
+):
+    os.environ.pop(_settings_env_name, None)
+
+os.environ.setdefault("OPENROUTER_API_KEY", "test-key")
+os.environ.setdefault("OPENROUTER_MODEL", "openrouter/free")
 os.environ.setdefault("BROWSER_PROVIDER", "local")
 
 from backend.agent.service import ManagedRunContext, RunService
@@ -79,11 +106,15 @@ class FakeRunner:
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
     return Settings(
-        GOOGLE_API_KEY="test-key",
+        _env_file=None,
+        OPENROUTER_API_KEY="test-key",
         ARTIFACT_ROOT=tmp_path,
         HEADLESS=True,
-        GOOGLE_MODEL="gemini-3.5-flash-lite",
+        OPENROUTER_MODEL="openrouter/free",
         BROWSER_PROVIDER="local",
+        BROWSER_CONTAINER_MODE=False,
+        BROWSER_PREFLIGHT_ON_STARTUP=False,
+        CORS_ALLOW_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"],
     )
 
 
@@ -118,19 +149,15 @@ def test_healthcheck(settings: Settings) -> None:
         assert response.json() == {"status": "ok"}
 
 
-def test_models_endpoint_returns_google_catalog(settings: Settings) -> None:
+def test_models_endpoint_returns_openrouter_catalog(settings: Settings) -> None:
     runner = FakeRunner()
     with create_test_client(settings, runner) as client:
         response = client.get("/models")
 
     assert response.status_code == 200
     assert response.json() == {
-        "default_model": "gemini-3.5-flash-lite",
-        "models": [
-            {"id": "gemini-3.5-flash-lite", "label": "Gemini 3.5 Flash-Lite"},
-            {"id": "gemini-3.5-flash", "label": "Gemini 3.5 Flash"},
-            {"id": "gemini-3.6-flash", "label": "Gemini 3.6 Flash"},
-        ],
+        "default_model": "openrouter/free",
+        "models": [{"id": "openrouter/free", "label": "OpenRouter Free Router"}],
     }
 
 
@@ -275,7 +302,7 @@ def test_create_run_and_status(settings: Settings) -> None:
         assert status.status_code == 200
         assert status.json()["task"] == "Open example.com"
         assert status.json()["headless"] is True
-        assert status.json()["model"] == "gemini-3.5-flash-lite"
+        assert status.json()["model"] == "openrouter/free"
 
 
 def test_create_run_ignores_client_headless_override(settings: Settings) -> None:
@@ -286,13 +313,13 @@ def test_create_run_ignores_client_headless_override(settings: Settings) -> None
         assert response.json()["headless"] is True
 
 
-def test_create_run_accepts_supported_google_model_override(settings: Settings) -> None:
+def test_create_run_accepts_supported_openrouter_model_override(settings: Settings) -> None:
     runner = FakeRunner()
     with create_test_client(settings, runner) as client:
-        response = client.post("/runs", json={"task": "Open example.com", "model": "gemini-3.6-flash"})
+        response = client.post("/runs", json={"task": "Open example.com", "model": "openrouter/free"})
 
     assert response.status_code == 201
-    assert response.json()["model"] == "gemini-3.6-flash"
+    assert response.json()["model"] == "openrouter/free"
 
 
 def test_create_run_rejects_unsupported_model_override(settings: Settings) -> None:
@@ -479,11 +506,15 @@ async def test_completed_runs_are_evicted_from_memory(settings: Settings) -> Non
 
 def test_subscriber_backlog_is_bounded(settings: Settings) -> None:
     bounded_settings = Settings(
-        GOOGLE_API_KEY="test-key",
+        _env_file=None,
+        OPENROUTER_API_KEY="test-key",
         ARTIFACT_ROOT=settings.artifact_root,
         HEADLESS=True,
-        GOOGLE_MODEL="gemini-3.5-flash-lite",
+        OPENROUTER_MODEL="openrouter/free",
         BROWSER_PROVIDER="local",
+        BROWSER_CONTAINER_MODE=False,
+        BROWSER_PREFLIGHT_ON_STARTUP=False,
+        CORS_ALLOW_ORIGINS=["http://localhost:5173", "http://127.0.0.1:5173"],
         EVENT_SUBSCRIBER_QUEUE_SIZE=3,
     )
     service = RunService(bounded_settings, FakeRunner())

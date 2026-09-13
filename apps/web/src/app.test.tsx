@@ -67,7 +67,7 @@ function createStatus(overrides: Partial<RunStatusResponse> = {}): RunStatusResp
     run_id: "run-123",
     status: "running",
     task: "Open example.com",
-    model: "gemini-3.6-flash",
+    model: "openrouter/free",
     headless: false,
     current_step_summary: "Run started.",
     created_at: "2026-08-03T10:00:00Z",
@@ -110,12 +110,8 @@ function createBlockedResultPayload(): ResultArtifactPayload {
 
 function createModelCatalog() {
   return {
-    default_model: "gemini-3.5-flash-lite",
-    models: [
-      { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite" },
-      { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
-      { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash" },
-    ],
+    default_model: "openrouter/free",
+    models: [{ id: "openrouter/free", label: "OpenRouter Free Router" }],
   };
 }
 
@@ -178,7 +174,7 @@ describe("operator console", () => {
     expect(screen.getByRole("heading", { name: "What Minerva sees" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Activity and answer" })).toBeInTheDocument();
     expect(screen.getByText("Status updates will appear here")).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("openrouter/free");
   });
 
   it("redirects unknown routes back to the launcher after 3 seconds", async () => {
@@ -234,7 +230,7 @@ describe("operator console", () => {
     render(<App />);
 
     const user = userEvent.setup();
-    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("openrouter/free");
     await user.type(screen.getByLabelText("What should Minerva do?"), "Open example.com and summarize the page");
     await user.click(screen.getByRole("button", { name: "Start run" }));
 
@@ -846,7 +842,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gemini-3.5-flash-lite",
+            model: "openrouter/free",
           }),
         );
       }
@@ -856,7 +852,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gemini-3.5-flash-lite",
+            model: "openrouter/free",
           }),
         );
       }
@@ -880,12 +876,12 @@ describe("operator console", () => {
     await screen.findByRole("heading", { name: "What Minerva is doing" });
     expect(retryRequest).toEqual({
       task: "Open example.com and summarize the page",
-      model: "gemini-3.5-flash-lite",
+      model: "openrouter/free",
     });
     expect(window.location.pathname).toBe("/runs/run-456");
   });
 
-  it("preserves a supported google model when retrying a failed run", async () => {
+  it("preserves the supported OpenRouter model when retrying a failed run", async () => {
     let retryRequest: Record<string, unknown> | null = null;
 
     installFetchMock((input, init) => {
@@ -900,7 +896,7 @@ describe("operator console", () => {
           createStatus({
             status: "failed",
             task: "Open example.com and summarize the page",
-            model: "gemini-3.6-flash",
+            model: "openrouter/free",
             current_step_summary: "Navigation failed on the destination site.",
             completed_at: "2026-08-03T10:02:00Z",
             last_error: "Navigation timeout",
@@ -918,7 +914,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gemini-3.6-flash",
+            model: "openrouter/free",
           }),
         );
       }
@@ -928,7 +924,7 @@ describe("operator console", () => {
           createStatus({
             run_id: "run-456",
             task: "Open example.com and summarize the page",
-            model: "gemini-3.6-flash",
+            model: "openrouter/free",
           }),
         );
       }
@@ -952,7 +948,7 @@ describe("operator console", () => {
     await screen.findByRole("heading", { name: "What Minerva is doing" });
     expect(retryRequest).toEqual({
       task: "Open example.com and summarize the page",
-      model: "gemini-3.6-flash",
+      model: "openrouter/free",
     });
     expect(window.location.pathname).toBe("/runs/run-456");
   });
@@ -996,7 +992,7 @@ describe("operator console", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
     expect(await screen.findByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("openrouter/free");
   });
 
   it("keeps new run as the primary failed-run action and exposes retry as secondary", async () => {
@@ -1151,6 +1147,6 @@ describe("operator console", () => {
     expect(window.location.pathname).toBe("/");
     expect(window.scrollTo).toHaveBeenCalledWith({ top: 0, left: 0, behavior: "auto" });
     expect(await screen.findByRole("heading", { name: "Tell Minerva what to do" })).toBeInTheDocument();
-    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("gemini-3.5-flash-lite");
+    expect(await screen.findByRole("combobox", { name: "Model override" })).toHaveValue("openrouter/free");
   });
 });
